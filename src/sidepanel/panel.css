@@ -517,6 +517,65 @@ body {
   color: var(--ok);
 }
 
+/* ---------------------------------------------------------- 근거 칩 */
+
+.cites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.cites-label {
+  color: var(--fg-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.cite-chip {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cite-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cite-chip[data-state="found"] {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.cite-chip[data-state="partial"] {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* 원문과 완전히 같지 않은 인용은 구분해서 보여 줍니다. */
+.cite-chip[data-exact="false"] {
+  border-style: dashed;
+  opacity: 0.85;
+}
+
+.cite-chip.is-clear {
+  border-style: dashed;
+}
+
 /* ------------------------------------------------------------- 상태 */
 
 .status {

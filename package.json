@@ -8,7 +8,8 @@
     "test": "node --test test/*.test.js",
     "validate": "node tools/validate.mjs",
     "check": "node tools/validate.mjs && node --test test/*.test.js",
-    "zip": "node tools/pack.mjs"
+    "zip": "node tools/pack.mjs",
+    "dev": "node tools/dev-server.mjs"
   },
   "engines": {
     "node": ">=18"

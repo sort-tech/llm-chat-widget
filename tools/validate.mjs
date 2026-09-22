@@ -115,7 +115,11 @@ const jsFiles = files.filter((file) => file.endsWith('.js'));
 const htmlFiles = files.filter((file) => file.endsWith('.html'));
 
 // 주입용(=클래식) 스크립트는 import/export 를 쓸 수 없습니다.
-const CLASSIC_SCRIPTS = ['src/content/extract.js', 'src/content/panel-host.js'];
+const CLASSIC_SCRIPTS = [
+  'src/content/extract.js',
+  'src/content/panel-host.js',
+  'src/content/probe.js',
+];
 
 const IMPORT_RE = /(?:^|\n)\s*(?:import|export)\s[^\n]*?from\s*['"]([^'"]+)['"]/g;
 const BARE_IMPORT_RE = /(?:^|\n)\s*import\s*['"]([^'"]+)['"]/g;
@@ -170,6 +174,78 @@ for (const file of jsFiles) {
 
   if (/\beval\s*\(/.test(source) || /new\s+Function\s*\(/.test(source)) {
     fail(`${name}: eval/new Function 은 확장 프로그램 CSP 에서 차단됩니다.`);
+  }
+}
+
+/* ------------------------------------- 주입되는 함수의 자기완결성 검사 */
+
+/**
+ * chrome.scripting.executeScript({ func }) 로 넘기는 함수는 문자열화되어
+ * 페이지에서 실행됩니다. 모듈 최상단의 상수를 참조하면 주입된 뒤 ReferenceError 가 납니다.
+ * (테스트로는 잡기 어렵고 실제 페이지에서만 터지므로 여기서 정적으로 확인합니다.)
+ */
+const INJECTED_FUNCTIONS = {
+  'src/content/highlight.js': ['highlightQuotes', 'clearHighlights'],
+};
+
+/** 중괄호 짝을 세어 함수 본문을 잘라냅니다(문자열/주석은 대략적으로 건너뜁니다). */
+function sliceFunctionBody(source, name) {
+  const signature = new RegExp(`function\\s+${name}\\s*\\(`);
+  const match = signature.exec(source);
+  if (!match) return null;
+  const open = source.indexOf('{', match.index);
+  if (open === -1) return null;
+
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, i);
+    }
+  }
+  return null;
+}
+
+for (const [name, functionNames] of Object.entries(INJECTED_FUNCTIONS)) {
+  const full = join(ROOT, name);
+  if (!exists(full)) {
+    fail(`주입 함수 검사 대상 파일이 없습니다: ${name}`);
+    continue;
+  }
+  const source = readFileSync(full, 'utf8');
+
+  // 모듈 최상단(들여쓰기 없음)에 선언된 이름들 — 주입된 함수는 이것들을 볼 수 없습니다.
+  const moduleNames = new Set();
+  for (const match of source.matchAll(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/gm)) {
+    moduleNames.add(match[1]);
+  }
+  for (const match of source.matchAll(/^(?:export\s+)?function\s+([A-Za-z_$][\w$]*)/gm)) {
+    moduleNames.add(match[1]);
+  }
+
+  for (const functionName of functionNames) {
+    const body = sliceFunctionBody(source, functionName);
+    if (body === null) {
+      fail(`${name}: 주입 대상 함수 ${functionName} 을 찾을 수 없습니다.`);
+      continue;
+    }
+    // 함수 안에서 다시 선언한 이름은 지역 변수이므로 제외합니다.
+    const localNames = new Set();
+    for (const match of body.matchAll(/(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g)) {
+      localNames.add(match[1]);
+    }
+    for (const outer of moduleNames) {
+      if (outer === functionName || localNames.has(outer)) continue;
+      const used = new RegExp(`(?<![.\\w$])${outer}(?![\\w$])`).test(body);
+      if (used) {
+        fail(
+          `${name}: ${functionName}() 이 모듈 최상단의 ${outer} 를 참조합니다. ` +
+            'executeScript({func}) 로 주입되면 ReferenceError 가 납니다 — 함수 안으로 옮기세요.',
+        );
+      }
+    }
   }
 }
 

@@ -15,7 +15,9 @@ LiteLLM 프록시(OpenAI 호환 API)에 연결되며, **Chrome** 과 **Microsoft
 ## 무엇을 하나
 
 - 툴바 아이콘(또는 `Alt+Shift+C`)을 누르면 브라우저 오른쪽 사이드 패널에 챗봇이 열립니다.
-- 질문할 때마다 **현재 탭의 본문을 새로 읽어** 프롬프트에 함께 보냅니다. 답변은 그 내용을 근거로 만들어집니다.
+- 질문할 때마다 **현재 탭의 본문을 읽어** 프롬프트에 함께 보냅니다. 답변은 그 내용을 근거로 만들어집니다.
+- 본문이 길면 **질문과 관련된 단락만 골라** 보냅니다. 문서 중간에 답이 있어도 찾습니다.
+- 답변 아래의 **근거 칩**을 누르면 페이지에서 그 문장을 형광펜으로 표시하고 그 위치로 스크롤합니다.
 - 참조 범위를 `전체 페이지` / `선택 영역` / `사용 안 함` 중에서 고를 수 있습니다.
 - 답변은 스트리밍으로 나타나고, 마크다운(표·코드 블록·목록)으로 렌더링됩니다.
 - 대화는 **탭별로** 유지되고, 탭을 바꾸면 그 탭의 대화로 따라갑니다. 브라우저를 닫으면 사라집니다.
@@ -103,7 +105,9 @@ curl http://localhost:4000/chat/completions \
 | 질문 보내기 | `Enter` (한글 조합 중에는 전송되지 않습니다) |
 | 줄바꿈 | `Shift+Enter` |
 | 생성 중지 | `중지` 버튼 또는 `Esc` |
-| 페이지 다시 읽기 | 컨텍스트 바의 `⟳` |
+| 근거 확인 | 답변 아래 근거 칩 클릭 → 페이지에서 해당 문장 하이라이트 + 스크롤 (`(일부)` 는 앞부분만 일치) |
+| 하이라이트 지우기 | 근거 줄의 `표시 지우기` |
+| 페이지 다시 읽기 | 컨텍스트 바의 `⟳` (캐시를 무시하고 다시 추출) |
 | 새 대화 | 위쪽 `＋` |
 | 선택 영역만 보기 | 페이지에서 텍스트를 선택 → 참조 범위를 `선택 영역` 으로 변경 |
 | 단축키 변경 | `chrome://extensions/shortcuts` (Edge: `edge://extensions/shortcuts`) |
@@ -131,24 +135,28 @@ src/
     options.html / .css /.js 설정 화면, 연결 테스트
   content/
     extract.js              본문 추출 (주입 후 결과를 반환)
+    probe.js                "페이지가 그대로인가" 만 값싸게 확인(캐시용)
+    highlight.js            인용 문장 찾아 형광펜 표시(CSS Custom Highlight API)
     panel-host.js           페이지 내 패널 iframe 삽입/토글
   lib/
     defaults.js             기본값·저장소 키
     settings.js             설정 읽기/쓰기/정규화
     llm.js                  OpenAI 호환 호출, 스트리밍, 오류 메시지
     sse.js                  SSE 파서 (순수 함수)
-    context.js              페이지 내용 → 프롬프트 구성 (순수 함수)
+    context.js              페이지 내용 → 프롬프트 구성, 관련 단락 선택 (순수 함수)
+    pagecache.js            본문 캐시 신호·유효 기간 판단 (순수 함수)
     markdown.js             마크다운 → 안전한 HTML (순수 함수)
     pages.js                주입 가능한 페이지 판별
 test/
-  *.test.js                 Node 단위·통합 테스트 (100개)
+  *.test.js                 Node 단위·통합 테스트 (142개)
   fixtures/                 본문 추출 검증용 샘플 페이지(일반/까다로운 구조)
   harness/                  확장 프로그램 없이 UI 를 띄워 보는 개발용 하네스
     chrome-shim.js          chrome.* API 흉내(탭 전환·프레임·대기 요청 시뮬레이션)
     panel-harness.html      챗봇 패널
     options-harness.html    설정 화면
     inpage-harness.html     페이지 내 패널
-tools/validate.mjs          설치 전 구조 검사 (구문·경로·CSP)
+tools/validate.mjs          설치 전 구조 검사 (구문·경로·CSP·주입 함수 자기완결성)
+tools/dev-server.mjs        개발 서버 + 가짜 LiteLLM (하네스 실행용)
 tools/pack.mjs              스토어 업로드용 zip
 ```
 
@@ -156,7 +164,11 @@ tools/pack.mjs              스토어 업로드용 zip
 
 1. 패널이 현재 탭을 확인하고 `chrome.scripting.executeScript` 로 `extract.js` 를 주입합니다.
 2. `extract.js` 가 광고·내비게이션·푸터 등을 걷어내고 본문 후보를 점수로 골라 텍스트로 만듭니다(제목·설명·선택 영역·소제목도 함께).
-3. `context.js` 가 `[현재 페이지]` / `[페이지 내용]` 블록을 만들고, 너무 길면 앞 70% · 뒤 30% 를 남기고 가운데를 생략합니다.
+3. `context.js` 가 `[현재 페이지]` / `[페이지 내용]` 블록을 만듭니다. 본문이 설정한 글자 수보다 길면
+   **질문과 관련된 단락만** 골라 담습니다(낱말 겹침 + 흔한 말의 비중을 낮추고 길이로 정규화한 점수).
+   고른 단락 사이가 떨어져 있으면 생략을 표시하고, 소제목 목차를 함께 보내 빠진 부분이 있음을 알립니다.
+   질문에 단서가 될 낱말이 없으면(예: "요약해 줘") 앞 70% · 뒤 30% 를 남기는 방식으로 되돌아갑니다 —
+   도입부와 결론이 함께 있어야 요약이 제대로 되기 때문입니다.
 4. `llm.js` 가 `시스템 프롬프트 → 페이지 컨텍스트 → 최근 대화 → 질문` 순서로 메시지를 만들어 `/chat/completions` 에 보냅니다.
 5. 스트리밍 응답(SSE)을 `sse.js` 가 조각으로 해석하고, `markdown.js` 가 안전한 HTML 로 바꿔 화면에 붙입니다.
 
@@ -167,12 +179,26 @@ tools/pack.mjs              스토어 업로드용 zip
 
 페이지 컨텍스트는 저장된 대화에 남기지 않고 **질문할 때마다 새로 만듭니다.** 그래서 페이지를 이동한 뒤 이어서 질문하면 항상 최신 화면 내용을 근거로 답합니다.
 
+매번 본문을 다시 추출하지는 않습니다. 질문할 때 `probe.js` 를 **모든 프레임**에 넣어
+주소·본문 길이·프레임별 길이·내용 지문만 값싸게 확인하고, 그대로면 캐시한 본문을 쓰고
+**선택 영역만** 갱신합니다(위키백과 기준 70KB 전달 + 수십 ms 절약).
+주소·분량·지문이 바뀌면, 또는 `⟳` 를 누르면 다시 추출합니다.
+본문을 못 읽은 결과와 로딩 중 결과는 캐시하지 않습니다(늦게 렌더되는 페이지가 고착되지 않도록).
+
+답변이 끝나면 `"..."` 로 인용된 문장을 모아 **실제로 페이지에 있는 것만** 근거 칩으로 보여 줍니다.
+원문과 완전히 같지 않고 앞부분만 일치하면 칩에 `(일부)` 를 붙여 구분합니다 —
+모델이 고쳐 쓴 인용을 "검증된 근거" 처럼 보여 주지 않기 위함입니다.
+칩을 누르면 페이지에서 그 문장을 찾아 표시합니다. 인라인 태그(`<b>`, `<a>`)나 `<br>` 로 쪼개진 문장,
+열린 shadow root 안의 문장도 찾으며, 같은 문장이 여러 곳에 있으면 **화면에 보이는 본문 쪽**을 고릅니다
+(목차·메뉴·숨은 영역의 중복을 먼저 집지 않도록). 페이지 DOM 은 고치지 않습니다.
+
 ## 6. 개발
 
 ```bash
 npm run check     # 구조 검사 + 단위 테스트
 npm test          # 단위 테스트만
-npm run validate  # manifest/경로/CSP 검사만
+npm run validate  # manifest/경로/CSP/구문/주입 함수 자기완결성 검사
+npm run dev       # 개발 서버(+가짜 LiteLLM) — 하네스로 UI 확인
 npm run zip       # dist/page-chatbot-<version>.zip 생성
 ```
 
@@ -183,11 +209,13 @@ npm run zip       # dist/page-chatbot-<version>.zip 생성
 `test/harness/` 는 `chrome.*` API 를 흉내 내어 패널·설정 화면을 일반 웹페이지로 띄워 봅니다.
 확장 프로그램을 설치하지 않고도 렌더링과 스트리밍을 확인할 수 있습니다.
 
-1. 프로젝트 루트를 정적 서버로 띄웁니다. 예: `python3 -m http.server 8731`
-   (연결 테스트·스트리밍까지 보려면 `http://localhost:4000` 대신 실제 LiteLLM 주소를 `test/harness/chrome-shim.js` 의 `baseUrl` 에 적어 주세요.)
-2. `http://localhost:8731/test/harness/panel-harness.html` — 챗봇 패널
-3. `http://localhost:8731/test/harness/options-harness.html` — 설정 화면
-4. `http://localhost:8731/test/fixtures/article.html` 에서 개발자 도구 콘솔에 아래를 붙여 넣으면 본문 추출 결과를 그대로 볼 수 있습니다.
+1. `npm run dev` — 프로젝트를 서빙하면서 LiteLLM 의 `/models`·`/chat/completions` 까지 흉내 내는
+   개발 서버가 `http://127.0.0.1:8731` 에 뜹니다(실제 서버 없이 스트리밍까지 확인 가능).
+2. `/test/harness/panel-harness.html` — 챗봇 패널
+3. `/test/harness/options-harness.html` — 설정 화면
+4. `/test/harness/inpage-harness.html` — 페이지 내 패널
+5. `/test/harness/citation-check.html` — 근거 하이라이트 자동 점검(8가지 경우)
+6. `/test/fixtures/article.html` 에서 개발자 도구 콘솔에 아래를 붙여 넣으면 본문 추출 결과를 그대로 볼 수 있습니다.
 
 ```js
 eval(await fetch('/src/content/extract.js').then((r) => r.text()))
@@ -241,4 +269,8 @@ eval(await fetch('/src/content/extract.js').then((r) => r.text()))
   닫힌(closed) shadow root 는 브라우저가 접근을 막아 읽을 수 없습니다.
 - **스트리밍 토큰 수**: 스트리밍 응답에서는 서버가 `usage` 를 주지 않으면 토큰 수 대신 소요 시간만 표시합니다.
   (`stream_options` 를 보내지 않는 이유는 일부 백엔드가 이를 거부하기 때문입니다. 정확한 토큰 수가 필요하면 스트리밍을 끄세요.)
-- **아주 긴 페이지**: 본문은 설정한 글자 수까지만 보내고 가운데를 생략하며, 이때 소제목 목차를 함께 보냅니다.
+- **아주 긴 페이지**: 본문은 설정한 글자 수까지만 보냅니다. 질문과 관련된 단락을 고르며,
+  단서가 없으면 앞·뒤를 남기는 방식으로 되돌아갑니다. 하이라이트 검색은 30만 자까지만 훑습니다.
+- **근거 하이라이트**: 화면에 그려진 텍스트에만 동작합니다. canvas·이미지·PDF 안의 글자,
+  그리고 모델이 원문을 고쳐 쓴 인용은 찾지 못합니다(앞부분이 같으면 찾습니다).
+  페이지를 새로 고치면 표시는 사라집니다.

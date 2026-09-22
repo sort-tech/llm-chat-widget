@@ -4,8 +4,11 @@ import test from 'node:test';
 import {
   approxTokens,
   buildMessages,
+  extractTerms,
   foldMiddle,
   formatPageContext,
+  selectRelevantChunks,
+  splitChunks,
   summarizeMessages,
 } from '../src/lib/context.js';
 import { normalizeSettings } from '../src/lib/settings.js';
@@ -259,4 +262,239 @@ test('본문이 잘리면 소제목 목차를 함께 보낸다', () => {
   );
   assert.ok(context.includes('[페이지 목차(참고)]'));
   assert.ok(context.includes('큰 제목'));
+});
+
+/* ------------------------------------------- 질문과 관련된 단락 고르기 */
+
+const longDoc = [
+  '# 소개',
+  '이 문서는 여러 주제를 한 파일에 담고 있습니다. 도입부에는 전체 개요가 있습니다.',
+  ...Array.from({ length: 60 }, (_, i) => `## 잡다한 절 ${i}\n관계 없는 내용이 길게 이어집니다. 채우기 문장 ${i}. `.repeat(3)),
+  '## 환불 정책',
+  '환불은 결제일로부터 14일 이내에 신청할 수 있으며, 수수료 3,000원이 차감됩니다. 환불 계좌는 본인 명의여야 합니다.',
+  ...Array.from({ length: 60 }, (_, i) => `## 또 다른 절 ${i}\n역시 관계 없는 내용입니다. 채우기 문장 ${i}. `.repeat(3)),
+  '# 맺음말',
+  '문서의 끝입니다.',
+].join('\n\n');
+
+test('extractTerms 는 흔한 말을 걸러내고 어간 후보를 넣는다', () => {
+  const terms = extractTerms('환불 정책에 대해 알려줘');
+  assert.ok(terms.includes('환불'));
+  assert.ok(terms.includes('정책에') || terms.includes('정책'));
+  assert.ok(!terms.includes('알려줘'));
+  assert.deepEqual(extractTerms(''), []);
+  assert.deepEqual(extractTerms(null), []);
+});
+
+test('splitChunks 는 제목만 있는 조각을 다음 단락에 붙인다', () => {
+  const chunks = splitChunks('## 제목\n\n내용입니다.\n\n다음 단락입니다.');
+  assert.equal(chunks.length, 2);
+  assert.ok(chunks[0].startsWith('## 제목'));
+  assert.ok(chunks[0].includes('내용입니다.'));
+});
+
+test('문서 중간에 있는 답을 골라낸다 (foldMiddle 로는 버려지던 구간)', () => {
+  const picked = selectRelevantChunks(longDoc, '환불 수수료가 얼마야?', 1500);
+  assert.ok(picked.text.includes('수수료 3,000원'), '관련 단락이 선택되지 않았습니다');
+  assert.ok(picked.usedChars <= 1500 + 2);
+  assert.equal(picked.relevant, true);
+  assert.ok(picked.picked < picked.total);
+
+  // 같은 예산으로 앞뒤만 남기면 이 내용은 사라진다 — 개선 효과 확인
+  assert.ok(!foldMiddle(longDoc, 1500).includes('수수료 3,000원'));
+});
+
+test('고른 단락 사이가 떨어져 있으면 생략을 표시한다', () => {
+  const picked = selectRelevantChunks(longDoc, '환불 수수료', 1500);
+  assert.match(picked.text, /단락 생략/);
+});
+
+test('질문에 단서가 없으면 앞에서부터 담는다', () => {
+  const picked = selectRelevantChunks(longDoc, '음', 800);
+  assert.equal(picked.relevant, false);
+  assert.ok(picked.text.includes('도입부에는 전체 개요'));
+});
+
+test('단락 하나가 예산보다 커도 앞부분이라도 돌려준다', () => {
+  const picked = selectRelevantChunks('가'.repeat(5000), '아무거나', 300);
+  assert.ok(picked.text.length <= 300);
+  assert.ok(picked.text.length > 0);
+});
+
+test('빈 입력에서도 안전하다', () => {
+  assert.equal(selectRelevantChunks('', '질문', 1000).picked, 0);
+  assert.equal(selectRelevantChunks(null, '질문', 1000).text, '');
+  assert.equal(selectRelevantChunks('본문', '질문', 0).picked, 0);
+});
+
+test('buildMessages 는 질문을 단락 선택에 사용한다', () => {
+  const settings = normalizeSettings({ maxContextChars: 1500, systemPrompt: '' });
+  const messages = buildMessages({
+    settings,
+    page: {
+      ...page,
+      text: longDoc,
+      charCount: longDoc.length,
+      headings: [
+        { level: 1, text: '소개' },
+        { level: 2, text: '환불 정책' },
+        { level: 1, text: '맺음말' },
+      ],
+    },
+    history: [],
+    userText: '환불 수수료가 얼마인가요?',
+  });
+  const context = messages.find((m) => m.role === 'system').content;
+  assert.ok(context.includes('수수료 3,000원'), '질문이 단락 선택에 반영되지 않았습니다');
+  assert.match(context, /질문과 관련된 단락 \d+\/\d+개/);
+  assert.ok(context.includes('[페이지 목차(참고)]'));
+});
+
+test('본문이 예산 안에 들어가면 전체를 그대로 보낸다', () => {
+  const settings = normalizeSettings({ maxContextChars: 100000, systemPrompt: '' });
+  const messages = buildMessages({
+    settings,
+    page: { ...page, text: '짧은 본문입니다.', charCount: 10 },
+    history: [],
+    userText: '무엇?',
+  });
+  const context = messages.find((m) => m.role === 'system').content;
+  assert.match(context, /본문 전체/);
+  assert.ok(context.includes('짧은 본문입니다.'));
+});
+
+test('생략 표시까지 합쳐도 예산을 넘지 않는다 (회귀)', () => {
+  // 관련 단락이 문서 전체에 흩어져 있으면 생략 표시가 많이 붙는다.
+  const scattered = Array.from({ length: 300 }, (_, i) =>
+    i % 3 === 0
+      ? `## 절 ${i}\n환불 수수료 관련 문장 ${i} 입니다. 조금 더 길게 씁니다.`
+      : `## 절 ${i}\n무관한 문장 ${i} 입니다. 조금 더 길게 씁니다.`,
+  ).join('\n\n');
+
+  // 먼저 이 입력이 실제로 "여러 단락으로 쪼개지고 관련 단락이 골라지는" 경로를
+  // 타는지 확인합니다. (단락이 1개로 접히면 아래 단정이 공회전합니다.)
+  const sanity = selectRelevantChunks(scattered, '환불 수수료', 4000);
+  assert.ok(sanity.total > 50, `단락이 제대로 쪼개지지 않았습니다: ${sanity.total}개`);
+  assert.equal(sanity.hasSignal, true);
+  assert.ok(sanity.picked > 1 && sanity.picked < sanity.total);
+
+  for (const budget of [1000, 4000, 12000]) {
+    const picked = selectRelevantChunks(scattered, '환불 수수료', budget);
+    assert.ok(picked.text.length <= budget, `예산 ${budget} → 결과 ${picked.text.length}자`);
+    assert.equal(picked.usedChars, picked.text.length);
+    assert.ok(picked.text.includes('환불 수수료 관련'), '관련 단락이 빠졌습니다');
+  }
+});
+
+test('한 칸짜리 구멍은 메워 문맥을 잇는다', () => {
+  const doc = [
+    '환불 수수료는 3,000원입니다.',
+    '이어지는 설명 단락입니다. 문맥상 필요한 내용이 여기 있습니다.',
+    '환불 계좌는 본인 명의여야 합니다.',
+    ...Array.from({ length: 50 }, (_, i) => `무관한 절 ${i} 문장입니다.`),
+  ].join('\n\n');
+
+  const picked = selectRelevantChunks(doc, '환불', 2000);
+  assert.ok(picked.total > 10, `단락이 제대로 쪼개지지 않았습니다: ${picked.total}개`);
+  assert.equal(picked.hasSignal, true);
+  assert.ok(picked.text.includes('이어지는 설명 단락'), '사이 단락이 메워지지 않았습니다');
+  assert.ok(!picked.text.slice(0, picked.text.indexOf('환불 계좌')).includes('중간'), picked.text);
+});
+
+
+/* ------------------------------------------ 리뷰에서 확인된 회귀 방지 테스트 */
+
+test('제목과 본문이 한 조각이어도 단락이 접히지 않는다 (회귀: splitChunks 무력화)', () => {
+  // extract.js 는 제목 뒤에 개행 1개만 넣는 경우가 있어 "## 제목\n본문" 이 한 조각이 된다.
+  const doc = Array.from({ length: 40 }, (_, i) => `## 절 ${i}\n절 ${i} 의 본문 문장입니다.`).join('\n\n');
+  const chunks = splitChunks(doc);
+  assert.equal(chunks.length, 40, `단락이 ${chunks.length}개로 접혔습니다`);
+});
+
+test('제목만 있는 조각은 여전히 다음 단락에 붙는다', () => {
+  const chunks = splitChunks('## 제목\n\n본문입니다.\n\n## 다음\n\n다음 본문입니다.');
+  assert.equal(chunks.length, 2);
+  assert.ok(chunks[0].startsWith('## 제목'));
+  assert.ok(chunks[0].includes('본문입니다.'));
+});
+
+test('목록·표만 있는 긴 페이지도 여러 단락으로 쪼갠다', () => {
+  const list = Array.from({ length: 300 }, (_, i) => `- 항목 ${i} 설명입니다.`).join('\n');
+  assert.ok(splitChunks(list).length > 3, '긴 목록이 한 단락으로 남았습니다');
+});
+
+test('불용어의 조사 형태와 어간은 단서로 쓰지 않는다 (회귀)', () => {
+  for (const question of [
+    '이 페이지의 핵심 내용을 요약해 주세요.',
+    '어떻게 하는데?',
+    '되는지 알려줘',
+    '이 페이지 내용을 정리해 주세요',
+  ]) {
+    const terms = extractTerms(question);
+    for (const bad of ['하는', '되는', '있는', '내용', '페이지', '핵심', '요약', '정리']) {
+      assert.ok(!terms.includes(bad), `${question} → 불용어 ${bad} 가 단서로 남았습니다: ${terms}`);
+    }
+  }
+});
+
+test('"요약해 줘" 처럼 단서가 없는 요청은 도입부와 결론을 함께 보낸다 (회귀)', () => {
+  const doc = [
+    '# 서론',
+    '이 문서의 도입부입니다. 무엇을 다루는지 설명합니다.',
+    ...Array.from({ length: 80 }, (_, i) => `## 중간 ${i}\n중간 내용 ${i} 입니다. 길이를 채우는 문장입니다.`),
+    '# 결론',
+    '마지막 결론 문장입니다. 이 문서의 핵심 결과가 여기 있습니다.',
+  ].join('\n\n');
+
+  const settings = normalizeSettings({ maxContextChars: 2000, systemPrompt: '' });
+  for (const question of ['요약해 줘', '이 페이지의 핵심 내용을 5줄 이내로 요약해 주세요.', 'summarize this page']) {
+    const messages = buildMessages({
+      settings,
+      page: { ...page, text: doc, charCount: doc.length },
+      history: [],
+      userText: question,
+    });
+    const context = messages.find((m) => m.role === 'system').content;
+    assert.ok(context.includes('도입부입니다'), `${question}: 도입부가 빠졌습니다`);
+    assert.ok(context.includes('마지막 결론 문장'), `${question}: 결론이 빠졌습니다`);
+    assert.match(context, /앞·뒤/);
+  }
+});
+
+test('단서가 있는 질문은 여전히 관련 단락을 고른다', () => {
+  const doc = [
+    '# 서론',
+    '도입부입니다.',
+    ...Array.from({ length: 80 }, (_, i) => `## 중간 ${i}\n관계 없는 내용 ${i} 입니다. 길이를 채웁니다.`),
+    '## 환불 규정',
+    '환불 수수료는 3,000원이며 14일 이내에만 신청할 수 있습니다.',
+    ...Array.from({ length: 80 }, (_, i) => `## 뒤 ${i}\n역시 관계 없는 내용 ${i} 입니다.`),
+  ].join('\n\n');
+
+  const settings = normalizeSettings({ maxContextChars: 2000, systemPrompt: '' });
+  const messages = buildMessages({
+    settings,
+    page: { ...page, text: doc, charCount: doc.length },
+    history: [],
+    userText: '환불 수수료가 얼마인가요?',
+  });
+  const context = messages.find((m) => m.role === 'system').content;
+  assert.ok(context.includes('3,000원'), '관련 단락이 선택되지 않았습니다');
+  assert.match(context, /질문과 관련된 단락/);
+});
+
+test('긴 단락이 낱말 하나로 정답 단락을 밀어내지 않는다', () => {
+  const answer = '환불 수수료는 3,000원입니다.';
+  const filler = `환불 ${'채우기 문장입니다. '.repeat(120)}`; // 아주 긴 단락, 낱말 1회
+  const doc = [filler, filler, answer].join('\n\n');
+  const picked = selectRelevantChunks(doc, '환불 수수료', 1200);
+  assert.ok(picked.text.includes('3,000원'), '짧은 정답 단락이 밀려났습니다');
+});
+
+test('전체 상한으로 잘릴 때도 닫는 구분자가 남는다', () => {
+  const context = formatPageContext(
+    { ...page, text: '가'.repeat(400000), charCount: 400000 },
+    { mode: 'page', maxChars: 2000, sendUrl: true, question: '' },
+  );
+  assert.ok(context.includes('<<<END_PAGE_DATA>>>'), '닫는 구분자가 잘렸습니다');
 });

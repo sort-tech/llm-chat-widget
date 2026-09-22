@@ -267,11 +267,18 @@
       if (/^(P|DIV|LI|UL|OL|SECTION|TABLE|DL|DD|DT|H[1-6])$/.test(node.tagName)) out += ' / ';
     };
     for (const child of element.childNodes) walkCell(child);
-    return out
-      .replace(/\s*\/\s*/g, ' / ')
-      .replace(/^\s*\/\s*|\s*\/\s*$/g, '')
-      .replace(/ {2,}/g, ' ')
-      .trim();
+    return (
+      out
+        .replace(/\s*\/\s*/g, ' / ')
+        .replace(/ {2,}/g, ' ')
+        // 빈 칸이 이어져 '/ / /' 처럼 되는 것을 하나로 접습니다(표로 레이아웃을 잡은 페이지).
+        // 공백을 먼저 정리한 뒤에 해야 '/  /' 같은 경우도 접힙니다.
+        .replace(/(?:\/ ){2,}/g, '/ ')
+        .replace(/(?: \/){2,}/g, ' /')
+        .replace(/^\s*\/\s*|\s*\/\s*$/g, '')
+        .replace(/ {2,}/g, ' ')
+        .trim()
+    );
   };
 
   const serialize = (root) => {

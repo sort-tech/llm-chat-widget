@@ -33,7 +33,9 @@
     selection: '',
     headings: [{ level: 1, text: `탭 ${tabId} 제목` }],
     text: `탭 ${tabId} 본문입니다. `.repeat(40),
-    charCount: 1240,
+    get charCount() {
+      return this.text.length;
+    },
     truncated: false,
     depthClipped: false,
     hasFrames: false,
@@ -43,6 +45,9 @@
 
   let activeTabId = 1;
   let frames = null; // null 이면 makePage(activeTabId) 하나만 돌려줍니다.
+  let textLengthOverride = null; // 페이지가 바뀐 상황을 흉내 낼 때 사용
+  let selectionOverride = '';
+  const calls = []; // executeScript 호출 기록(캐시 동작 확인용)
 
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const pick = (store, keys) => {
@@ -102,10 +107,53 @@
       onRemoved: { addListener: () => {} },
     },
     scripting: {
-      executeScript: async ({ target }) => {
+      executeScript: async ({ target, files, func, args }) => {
         await new Promise((r) => setTimeout(r, 10)); // 실제 주입처럼 약간 늦게
+        const tabId = target?.tabId ?? activeTabId;
+        calls.push({ tabId, files, func: func?.name });
+
+        // 값싼 신호 스크립트 — 실제 probe.js 와 같은 모양으로 돌려줍니다.
+        if (files?.some((f) => f.endsWith('probe.js'))) {
+          const page = makePage(tabId);
+          const length = textLengthOverride ?? page.text.length;
+          const probe = (frameId, extra = {}) => ({
+            frameId,
+            result: {
+              ok: true,
+              url: page.url,
+              title: page.title,
+              textLength: length,
+              fingerprint: `fp${length}`,
+              frameCount: 0,
+              readyState: 'complete',
+              selection: selectionOverride,
+              ...extra,
+            },
+          });
+          // frames 를 지정했다면 그 프레임들에도 신호가 있다고 봅니다.
+          if (frames) {
+            return frames.map((entry, index) =>
+              probe(entry.frameId ?? index, {
+                textLength: entry.result?.charCount ?? length,
+                fingerprint: `fp${entry.result?.charCount ?? length}`,
+              }),
+            );
+          }
+          return [probe(0)];
+        }
+
+        // 하이라이트 함수 주입 — 실제 실행 결과 대신 정해진 값을 돌려줍니다.
+        if (func) {
+          return [
+            {
+              frameId: 0,
+              result: { supported: true, styled: true, found: 1, partial: 0, missed: [], total: 1 },
+            },
+          ];
+        }
+
         if (frames) return clone(frames);
-        return [{ frameId: 0, result: makePage(target?.tabId ?? activeTabId) }];
+        return [{ frameId: 0, result: makePage(tabId) }];
       },
     },
     sidePanel: { setPanelBehavior: async () => {}, open: async () => {}, setOptions: async () => {} },
@@ -122,6 +170,13 @@
     },
     setFrames(list) {
       frames = list;
+    },
+    calls,
+    setTextLength(value) {
+      textLengthOverride = value;
+    },
+    setSelection(value) {
+      selectionOverride = value;
     },
     activateTab(id) {
       activeTabId = id;

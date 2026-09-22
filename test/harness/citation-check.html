@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>근거 하이라이트 자동 점검</title>
+    <style>
+      body { font: 14px/1.6 system-ui, sans-serif; margin: 0; }
+      #panel { position: fixed; inset: 0 0 auto 0; z-index: 9; padding: 10px 14px;
+               background: #111827; color: #e5e7eb; font: 12px/1.5 ui-monospace, monospace;
+               white-space: pre; max-height: 55vh; overflow: auto; }
+      #stage { margin-top: 55vh; padding: 16px; }
+      .pass { color: #4ade80 } .fail { color: #f87171 }
+    </style>
+  </head>
+  <body>
+    <pre id="panel">실행 중…</pre>
+    <div id="stage"></div>
+
+    <script type="module">
+      // 시험용 페이지를 stage 안에 만든 뒤, highlight.js 를 실제로 돌려 결과를 검사합니다.
+      const stage = document.getElementById('stage');
+      stage.innerHTML = `
+        <div id="seo" style="position:absolute;left:-9999px">
+          <p>중복된 문장입니다 화면에는 보이지 않습니다</p>
+        </div>
+        <nav id="toc"><a href="#x">목차에 있는 문장입니다 여기도 중복</a></nav>
+        <article class="body">
+          <p><span>환불 신청은</span> <span>결제일로부터 14일 이내</span> <span>에만 가능합니다</span></p>
+          <p>영업시간은 09시부터 18시까지입니다<br>주말은 휴무입니다</p>
+          <p>The company&rsquo;s revenue grew 12 percent in 2024 according to the report.</p>
+          <p>중복된 문장입니다 화면에는 보이지 않습니다</p>
+          <p>목차에 있는 문장입니다 여기도 중복</p>
+          <p>마지막 단락의 문장은 경계 시험을 위해 충분히 길게 씁니다</p>
+          <p>XYZ 다음 단락 시작입니다</p>
+        </article>
+        <shadow-host></shadow-host>`;
+
+      class ShadowHost extends HTMLElement {
+        connectedCallback() {
+          this.attachShadow({ mode: 'open' }).innerHTML =
+            '<p>shadow root 안에 있는 근거 문장입니다 여기도 찾아야 합니다</p>';
+        }
+      }
+      if (!customElements.get('shadow-host')) customElements.define('shadow-host', ShadowHost);
+
+      const m = await import('/src/content/highlight.js');
+      const ps = [...stage.querySelectorAll('article.body p')];
+      const shadowText = stage
+        .querySelector('shadow-host')
+        .shadowRoot.querySelector('p')
+        .textContent.trim();
+
+      const firstRange = () => {
+        const h = CSS.highlights.get('page-chatbot-cite');
+        return h ? [...h][0] : null;
+      };
+
+      const cases = [
+        {
+          name: '인라인 태그 사이 공백 노드',
+          quote: ps[0].textContent.trim(),
+          expect: (out, range) => out.found === 1 && out.partial === 0 && range.toString().includes('에만 가능합니다'),
+        },
+        {
+          // extract.js 는 <br> 을 개행으로 내보내므로 모델의 인용에도 공백이 들어옵니다.
+          name: '<br> 이 들어간 문단',
+          quote: [...ps[1].childNodes]
+            .filter((n) => n.nodeType === Node.TEXT_NODE)
+            .map((n) => n.nodeValue.trim())
+            .join(' '),
+          expect: (out) => out.found === 1,
+        },
+        {
+          name: '영어 아포스트로피(곡선)',
+          quote: ps[2].textContent.trim().replace('’', "'"),
+          expect: (out) => out.found === 1 && out.partial === 0,
+        },
+        {
+          name: '숨은 중복보다 보이는 쪽을 고름',
+          quote: ps[3].textContent.trim(),
+          expect: (out, range) => out.found === 1 && !!range.startContainer.parentElement.closest('article.body'),
+        },
+        {
+          name: 'nav 중복보다 본문을 고름',
+          quote: ps[4].textContent.trim(),
+          expect: (out, range) => out.found === 1 && range.startContainer.parentElement.tagName === 'P',
+        },
+        {
+          name: '단락 경계가 다음 단락을 삼키지 않음',
+          // 앞 24자는 실제 문장 안에서 끝나고, 뒤쪽은 페이지에 없는 꼬리입니다.
+          quote: ps[5].textContent.trim() + ' 그리고 페이지에 없는 꼬리 문장입니다',
+          expect: (out, range) =>
+            out.found === 1 && out.partial === 1 && !range.toString().includes('XYZ'),
+        },
+        {
+          name: 'shadow root 안의 문장',
+          quote: shadowText,
+          expect: (out) => out.found === 1,
+        },
+        {
+          name: '페이지에 없는 문장',
+          quote: 'zzz 이 문장은 페이지에 전혀 없습니다 zzz',
+          expect: (out) => out.found === 0 && out.missed.length === 1,
+        },
+      ];
+
+      const lines = [];
+      let failed = 0;
+      for (const test of cases) {
+        m.clearHighlights();
+        const out = m.highlightQuotes([test.quote]);
+        const range = firstRange();
+        let ok = false;
+        try {
+          ok = Boolean(test.expect(out, range));
+        } catch (error) {
+          ok = false;
+          out.error = String(error?.message ?? error);
+        }
+        if (!ok) failed += 1;
+        lines.push(
+          `${ok ? 'PASS' : 'FAIL'}  ${test.name}\n      found=${out.found} partial=${out.partial} styled=${out.styled} missed=${out.missed.length}` +
+            (range ? `\n      범위="${range.toString().slice(0, 70)}"` : '') +
+            (out.error ? `\n      오류=${out.error}` : ''),
+        );
+      }
+
+      const panel = document.getElementById('panel');
+      panel.textContent = `${failed === 0 ? '모두 통과' : `${failed}건 실패`}  (총 ${cases.length}건)\n\n${lines.join('\n\n')}`;
+      panel.className = failed === 0 ? 'pass' : 'fail';
+      window.__result = { failed, total: cases.length };
+    </script>
+  </body>
+</html>

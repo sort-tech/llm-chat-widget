@@ -13,6 +13,8 @@ import { chat, describeError, listModels } from '../lib/llm.js';
 import { approxTokens, buildMessages, formatPageContext } from '../lib/context.js';
 import { renderMarkdown } from '../lib/markdown.js';
 import { describeRestriction, isInjectable } from '../lib/pages.js';
+import { clearHighlights, findCitations, highlightQuotes } from '../content/highlight.js';
+import { isCacheFresh, makeSignature, PAGE_CACHE_TTL, pruneCache } from '../lib/pagecache.js';
 
 /* ------------------------------------------------------------ 요소 참조 */
 
@@ -89,7 +91,10 @@ const state = {
   ctxGen: 0,
   /** 진행 중인 모델 목록 요청. 새 요청이 오면 취소합니다. */
   modelsController: null,
+  /** 탭별 본문 캐시: tabId -> { page, signature, at } */
+  pageCache: new Map(),
 };
+
 
 const nextId = () => {
   state.seq += 1;
@@ -113,6 +118,11 @@ const setStatus = (text) => {
 };
 
 const fmt = (n) => Number(n ?? 0).toLocaleString('ko-KR');
+
+/** 근거 표시 관련 안내 — 응답 중에는 진행 상태를 덮지 않습니다. */
+const setCiteStatus = (text) => {
+  if (!state.busy) setStatus(text);
+};
 
 function showBanner({ title, hint, action }) {
   els.bannerTitle.textContent = title ?? '';
@@ -273,10 +283,11 @@ function renderContextBar(modeOverride) {
 }
 
 /**
- * 현재 탭의 본문을 새로 읽습니다.
+ * 현재 탭의 본문을 읽습니다.
  * @param {'page'|'selection'|'off'} [modeOverride] 이번 한 번만 적용할 참조 범위
+ * @param {{force?: boolean}} [options] force 면 캐시를 무시하고 다시 추출합니다.
  */
-async function refreshContext(modeOverride) {
+async function refreshContext(modeOverride, { force = false } = {}) {
   const mode = modeOverride ?? state.settings.contextMode;
   if (mode === 'off') {
     state.page = null;
@@ -296,6 +307,10 @@ async function refreshContext(modeOverride) {
   const gen = ++state.ctxGen;
   const stale = () => gen !== state.ctxGen || tabId !== state.tabId;
 
+  // 강제 새로고침이면 캐시를 먼저 비웁니다. 그렇지 않으면 이 호출이 늦게 끝나는 사이
+  // 다른 refreshContext 가 낡은 캐시를 그대로 재사용할 수 있습니다.
+  if (force) state.pageCache.delete(tabId);
+
   state.pageLoading = true;
   state.pageError = '';
   renderContextBar(modeOverride);
@@ -309,6 +324,46 @@ async function refreshContext(modeOverride) {
     if (!isInjectable(url)) {
       state.page = null;
       state.pageError = describeRestriction(url);
+      return;
+    }
+
+    // 먼저 값싼 신호만 읽습니다(주소·본문 길이·프레임 수·선택 영역).
+    // 신호가 캐시와 같으면 본문을 다시 추출·전송하지 않고 선택 영역만 갱신합니다.
+    //
+    // 신호는 항상 probe 로만 만듭니다. force 일 때도 마찬가지입니다 —
+    // 추출 결과의 charCount(정리된 본문)와 probe 의 textLength(원문)는
+    // 단위가 달라, 출처가 섞이면 다음 캐시 조회가 반드시 빗나갑니다.
+    //
+    // 본문 추출은 모든 프레임에서 하므로 신호도 모든 프레임에서 읽어야 합니다.
+    // 최상위 프레임만 보면, 본문이 iframe 안에 있는 사이트에서 내용이 바뀌어도
+    // 신호가 그대로여서 최대 5분간 옛 본문으로 답하게 됩니다.
+    const probeEntries = await chrome.scripting
+      .executeScript({ target: { tabId, allFrames: true }, files: ['src/content/probe.js'] })
+      .then((entries) =>
+        (entries ?? [])
+          .map((entry) => ({ frameId: entry?.frameId ?? 0, result: entry?.result }))
+          .filter((entry) => entry.result),
+      )
+      .catch(() => []);
+    if (stale()) return;
+
+    const probed =
+      probeEntries.find((entry) => entry.frameId === 0)?.result ?? probeEntries[0]?.result ?? null;
+    // 선택 영역은 어느 프레임에서 했든 살립니다(iframe 안에서 고른 경우 포함).
+    const probedSelection =
+      probeEntries.map((entry) => entry.result?.selection).find((value) => value) ?? '';
+    const frameSignature = probeEntries
+      .slice()
+      .sort((a, b) => a.frameId - b.frameId)
+      .map((entry) => `${entry.frameId}:${entry.result?.textLength ?? -1}`)
+      .join(',');
+    const topSignature = makeSignature(probed);
+    const signature = topSignature ? `${topSignature}|${frameSignature}` : null;
+
+    const cached = state.pageCache.get(tabId);
+    if (!force && isCacheFresh(cached, signature, Date.now(), PAGE_CACHE_TTL)) {
+      state.page = { ...cached.page, selection: probedSelection };
+      state.pageError = '';
       return;
     }
 
@@ -339,7 +394,7 @@ async function refreshContext(modeOverride) {
 
     // 하위 프레임의 URL/제목을 모델에 넘기지 않도록 메타데이터는 최상위 것으로 고정합니다.
     const base = top ?? richest;
-    state.page =
+    const merged =
       richest && richest !== base && (richest.charCount || 0) > (base.charCount || 0)
         ? {
             ...base,
@@ -352,6 +407,24 @@ async function refreshContext(modeOverride) {
             source: `${richest.source} (내부 프레임)`,
           }
         : base;
+
+    // 선택 영역은 probe 가 방금 읽은 값이 가장 최신입니다.
+    state.page = probedSelection ? { ...merged, selection: probedSelection } : merged;
+
+    // 캐시하지 않는 경우:
+    //  - 신호를 못 얻음(제한된 페이지) → 잘못 재사용하는 것보다 안전합니다.
+    //  - 읽은 내용이 없음 → 늦게 렌더되는 페이지에서 "본문 없음" 이 5분간 고착됩니다.
+    //  - 아직 로딩 중 → 로딩 중 스냅샷이 고착됩니다.
+    const worthCaching =
+      Boolean(signature) &&
+      Boolean(state.page.text || state.page.selection) &&
+      probed?.readyState === 'complete';
+    if (worthCaching) {
+      state.pageCache.set(tabId, { page: state.page, signature, at: Date.now() });
+      pruneCache(state.pageCache);
+    } else {
+      state.pageCache.delete(tabId);
+    }
   } catch (error) {
     if (stale()) return;
     state.page = null;
@@ -411,6 +484,130 @@ async function restoreConversation(tabId = state.tabId) {
   if (tabId !== state.tabId) return;
   state.turns = restored;
   state.nodes.clear();
+}
+
+/* ---------------------------------------------------------- 근거 하이라이트 */
+
+/**
+ * 인용 문장을 현재 탭에서 찾아 형광펜으로 표시하고 그 위치로 스크롤합니다.
+ * 본문이 하위 프레임에 있을 수도 있으므로 모든 프레임에 시도합니다.
+ */
+async function showCitation(quote, chip) {
+  if (state.tabId == null) {
+    setCiteStatus('현재 탭을 확인할 수 없습니다.');
+    return;
+  }
+
+  // 참조 범위가 '사용 안 함' 이면 state.tabUrl 이 비어 있을 수 있으므로 새로 확인합니다.
+  let url = state.tabUrl;
+  try {
+    if (!url) url = (await chrome.tabs.get(state.tabId))?.url ?? '';
+  } catch {
+    url = '';
+  }
+  if (!isInjectable(url)) {
+    setCiteStatus(describeRestriction(url));
+    return;
+  }
+
+  // 칩 이름은 DOM 이 아니라 dataset 에서 복원합니다(연속 클릭 시 '표시됨' 고착 방지).
+  const label = chip?.dataset.label ?? chip?.textContent ?? '';
+  const restore = () => {
+    if (!chip) return;
+    chip.textContent = label;
+    delete chip.dataset.state;
+  };
+
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: state.tabId, allFrames: true },
+      func: highlightQuotes,
+      args: [[quote]],
+    });
+    const outcomes = (results ?? []).map((entry) => entry?.result).filter(Boolean);
+    const found = outcomes.reduce((sum, outcome) => sum + (outcome.found ?? 0), 0);
+    const partial = outcomes.reduce((sum, outcome) => sum + (outcome.partial ?? 0), 0);
+    const supported = outcomes.some((outcome) => outcome.supported);
+    const styled = outcomes.some((outcome) => outcome.found > 0 && outcome.styled);
+    const truncated = outcomes.some((outcome) => outcome.truncated);
+
+    if (found > 0) {
+      const notes = [];
+      if (partial > 0) notes.push('문장 앞부분만 일치해 그 부분만 표시했습니다');
+      if (!styled) notes.push('색을 적용하지 못해 위치로만 이동했습니다');
+      setCiteStatus(notes.length ? `근거 표시 — ${notes.join(' · ')}` : '페이지에서 근거를 표시했습니다.');
+      if (chip) {
+        chip.dataset.state = partial > 0 ? 'partial' : 'found';
+        chip.textContent = partial > 0 ? '일부 표시' : '표시됨';
+        if (chip.dataset.timer) clearTimeout(Number(chip.dataset.timer));
+        chip.dataset.timer = String(setTimeout(restore, 1400));
+      }
+    } else if (!supported) {
+      setCiteStatus('이 브라우저는 하이라이트 기능을 지원하지 않습니다.');
+    } else if (truncated) {
+      setCiteStatus('문서가 매우 길어 앞부분에서만 찾았습니다. 해당 위치를 찾지 못했습니다.');
+    } else {
+      setCiteStatus('페이지에서 그 문장을 찾지 못했습니다(내용이 바뀐 것 같습니다).');
+    }
+  } catch (error) {
+    setCiteStatus(`근거 표시 실패: ${String(error?.message ?? error)}`);
+  }
+}
+
+async function clearCitations() {
+  if (state.tabId == null) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: state.tabId, allFrames: true },
+      func: clearHighlights,
+    });
+    setCiteStatus('');
+  } catch {
+    /* 무시 — 제한된 페이지이거나 탭이 닫힌 경우 */
+  }
+}
+
+/** 답변 아래에 "근거 보기" 칩들을 붙입니다. */
+function renderCitations(turn, bubble) {
+  // 이전 버전에서 저장된 대화는 문자열 배열이므로 함께 받아들입니다.
+  const quotes = (Array.isArray(turn.citations) ? turn.citations : [])
+    .map((item) => (typeof item === 'string' ? { text: item, exact: true } : item))
+    .filter((item) => item && typeof item.text === 'string');
+  if (quotes.length === 0) return;
+
+  const box = document.createElement('div');
+  box.className = 'cites';
+
+  const caption = document.createElement('span');
+  caption.className = 'cites-label';
+  caption.textContent = '근거';
+  box.append(caption);
+
+  for (const quote of quotes) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'cite-chip';
+    chip.title = quote.exact
+      ? `페이지에서 찾아 표시: ${quote.text}`
+      : `원문과 완전히 같지 않아 앞부분만 확인됨: ${quote.text}`;
+    const label = quote.text.length > 28 ? `${quote.text.slice(0, 28)}…` : quote.text;
+    chip.textContent = quote.exact ? label : `${label} (일부)`;
+    // 클릭 피드백 후 되돌릴 이름을 DOM 이 아닌 dataset 에 보관합니다.
+    chip.dataset.label = chip.textContent;
+    if (!quote.exact) chip.dataset.exact = 'false';
+    chip.addEventListener('click', () => showCitation(quote.text, chip));
+    box.append(chip);
+  }
+
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'cite-chip is-clear';
+  clear.textContent = '표시 지우기';
+  clear.dataset.label = clear.textContent;
+  clear.addEventListener('click', () => clearCitations());
+  box.append(clear);
+
+  bubble.append(box);
 }
 
 /* -------------------------------------------------------------- 렌더링 */
@@ -496,6 +693,7 @@ function paintBubble(turn, bubble) {
   }
 
   bubble.innerHTML = renderMarkdown(turn.content ?? '');
+  if (turn.status === 'done') renderCitations(turn, bubble);
   if (turn.status === 'streaming') {
     const dot = document.createElement('span');
     dot.className = 'typing';
@@ -739,6 +937,13 @@ async function send(text, { contextMode, selectionText, fromInput = false } = {}
       answer.content = '_(모델이 빈 응답을 반환했습니다. 다시 시도해 보세요.)_';
     }
     answer.ms = Date.now() - started;
+    // 답변에서 인용한 문장 중 실제로 페이지 내용에 있는 것만 근거로 남깁니다.
+    // 참조하지 않은 경우(off)에는 근거를 만들지 않습니다 — 모델이 본 적 없는 내용입니다.
+    // 선택 영역은 사용자가 화면에서 직접 고른 텍스트이므로 대조 대상에 포함합니다.
+    answer.citations =
+      effective.contextMode === 'off'
+        ? []
+        : findCitations(answer.content, [page?.selection, page?.text].filter(Boolean).join('\n\n'));
 
     const seconds = (answer.ms / 1000).toFixed(1);
     const usage = result.usage;
@@ -958,7 +1163,7 @@ function wireUi() {
   els.stop.addEventListener('click', () => state.controller?.abort());
   els.newChat.addEventListener('click', () => newChat());
   els.settings.addEventListener('click', openOptions);
-  els.refresh.addEventListener('click', () => refreshContext());
+  els.refresh.addEventListener('click', () => refreshContext(undefined, { force: true }));
   els.bannerClose.addEventListener('click', hideBanner);
 
   els.input.addEventListener('input', autoGrow);
@@ -1035,9 +1240,11 @@ function wireTabEvents() {
   }
 
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    // 페이지가 바뀌면 그 탭의 캐시는 더 이상 유효하지 않습니다.
+    if (changeInfo.url || changeInfo.status === 'loading') state.pageCache.delete(tabId);
     if (tabId !== state.tabId) return;
     if (changeInfo.status === 'complete' || changeInfo.url) {
-      if (!state.busy) refreshContext();
+      if (!state.busy) refreshContext(undefined, { force: true });
     }
   });
 }
