@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>웹 컴포넌트 문서</title></head>
+<body>
+  <p>바깥에는 글이 거의 없습니다.</p>
+  <my-article></my-article>
+  <script>
+    class MyArticle extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = `
+          <h1>shadow root 안의 제목</h1>
+          <p>이 단락은 shadow DOM 안에 있어서 cloneNode 로는 보이지 않습니다. 예비 경로가 동작하면 추출되어야 합니다.</p>
+          <p>두 번째 단락입니다. 길이를 확보하기 위해 문장을 조금 더 붙입니다. 이 문장도 포함되어야 합니다.</p>
+          <nested-part></nested-part>`;
+      }
+    }
+    class NestedPart extends HTMLElement {
+      connectedCallback() {
+        this.attachShadow({ mode: 'open' }).innerHTML = '<p>중첩된 shadow root 안의 단락입니다. 여기까지 읽히면 좋습니다.</p>';
+      }
+    }
+    customElements.define('nested-part', NestedPart);
+    customElements.define('my-article', MyArticle);
+  </script>
+</body>
+</html>

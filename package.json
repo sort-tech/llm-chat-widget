@@ -1,0 +1,16 @@
+{
+  "name": "page-chatbot-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "현재 페이지를 참조해 답하는 Chrome/Edge 사이드 패널 챗봇 확장 프로그램",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "validate": "node tools/validate.mjs",
+    "check": "node tools/validate.mjs && node --test test/*.test.js",
+    "zip": "node tools/pack.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

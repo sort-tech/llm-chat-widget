@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>페이지 챗봇 설정</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <header class="head">
+      <img src="../../icons/icon48.png" alt="" width="36" height="36" />
+      <div>
+        <h1>페이지 챗봇 설정</h1>
+        <p>LiteLLM(OpenAI 호환) 서버 정보와 답변 방식을 정합니다.</p>
+      </div>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>연결</h2>
+
+        <div class="field">
+          <label for="baseUrl">서버 주소</label>
+          <input
+            id="baseUrl"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="http://localhost:4000"
+          />
+          <small
+            >LiteLLM 프록시 주소입니다. <code>/chat/completions</code> 는 자동으로 붙습니다.
+            (예: <code>http://localhost:4000</code>, <code>http://localhost:4000/v1</code>)</small
+          >
+        </div>
+
+        <div class="field">
+          <label for="apiKey">API 키</label>
+          <div class="row">
+            <input
+              id="apiKey"
+              type="password"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="sk-..."
+            />
+            <button id="toggleKey" class="btn btn-ghost" type="button">표시</button>
+          </div>
+          <small
+            >이 브라우저 프로필의 확장 프로그램 저장소에 평문으로 보관됩니다. 공용 PC 에서는 사용
+            후 지워 주세요.</small
+          >
+        </div>
+
+        <div class="field">
+          <label for="model">모델</label>
+          <div class="row">
+            <input id="model" type="text" list="modelList" spellcheck="false" autocomplete="off" />
+            <datalist id="modelList"></datalist>
+            <button id="loadModels" class="btn btn-ghost" type="button">목록 불러오기</button>
+          </div>
+          <small>LiteLLM <code>config.yaml</code> 의 <code>model_name</code> 과 같아야 합니다.</small>
+        </div>
+
+        <div class="field">
+          <button id="testConnection" class="btn btn-primary" type="button">연결 테스트</button>
+          <div id="testResult" class="result" hidden></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>답변</h2>
+
+        <div class="field">
+          <label for="systemPrompt">시스템 프롬프트</label>
+          <textarea id="systemPrompt" rows="8" spellcheck="false"></textarea>
+          <small>모든 대화의 맨 앞에 붙는 지시문입니다.</small>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label for="temperature">temperature</label>
+            <input id="temperature" type="number" min="0" max="2" step="0.1" />
+          </div>
+          <div class="field">
+            <label for="maxTokens">max_tokens</label>
+            <input id="maxTokens" type="number" min="0" max="200000" step="128" />
+            <small>0 = 서버 기본값</small>
+          </div>
+          <div class="field">
+            <label for="timeoutSec">응답 제한 시간(초)</label>
+            <input id="timeoutSec" type="number" min="5" max="600" step="5" />
+            <small>데이터가 들어오는 동안에는 초기화됩니다.</small>
+          </div>
+          <div class="field">
+            <label for="historyTurns">기억할 이전 메시지 수</label>
+            <input id="historyTurns" type="number" min="0" max="100" step="2" />
+          </div>
+        </div>
+
+        <label class="check">
+          <input id="stream" type="checkbox" />
+          <span>스트리밍으로 받기 (답변이 한 글자씩 나타남)</span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>페이지 참조</h2>
+
+        <div class="grid">
+          <div class="field">
+            <label for="contextMode">기본 참조 범위</label>
+            <select id="contextMode">
+              <option value="page">전체 페이지</option>
+              <option value="selection">선택 영역</option>
+              <option value="off">사용 안 함</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="maxContextChars">본문 최대 전송 글자 수</label>
+            <input id="maxContextChars" type="number" min="500" max="200000" step="1000" />
+            <small>길면 앞·뒤를 남기고 가운데를 생략합니다.</small>
+          </div>
+        </div>
+
+        <label class="check">
+          <input id="sendPageUrl" type="checkbox" />
+          <span>페이지 제목·URL 도 함께 보내기</span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>패널 위치</h2>
+        <label class="check">
+          <input type="radio" name="panelMode" value="sidepanel" />
+          <span
+            ><strong>브라우저 사이드 패널</strong> — 툴바 아이콘을 누르면 브라우저 오른쪽 사이드바에
+            열립니다. (권장, Chrome/Edge 114 이상)</span
+          >
+        </label>
+        <label class="check">
+          <input type="radio" name="panelMode" value="inpage" />
+          <span
+            ><strong>페이지 안에 떠 있는 패널</strong> — 페이지 오른쪽에 직접 띄웁니다. 너비를 드래그로
+            조절할 수 있습니다.</span
+          >
+        </label>
+      </section>
+
+      <section class="card muted">
+        <h2>참고</h2>
+        <ul>
+          <li>
+            단축키는 <code id="shortcutUrl">chrome://extensions/shortcuts</code>
+            (Edge 는 <code>edge://extensions/shortcuts</code>) 에서 바꿉니다.
+            <button id="copyShortcut" class="btn btn-ghost btn-sm" type="button">주소 복사</button>
+          </li>
+          <li>대화 내용은 탭별로 보관되며 브라우저를 닫으면 사라집니다.</li>
+          <li>
+            페이지 본문은 질문할 때마다 새로 읽어 프롬프트에 담기며, 설정한 서버로만 전송됩니다.
+          </li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="actions">
+      <span id="saveState" class="save-state"></span>
+      <button id="reset" class="btn btn-ghost" type="button">기본값으로 되돌리기</button>
+      <button id="save" class="btn btn-primary" type="button">저장</button>
+    </footer>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>페이지 제목 — 사이트</title>
+  <meta name="description" content="이 문서의 메타 설명입니다.">
+  <meta property="og:title" content="추출 테스트용 기사 제목">
+  <meta property="og:site_name" content="테스트 사이트">
+  <meta property="article:published_time" content="2026-09-01T09:00:00Z">
+</head>
+<body>
+  <header class="site-header"><h1>사이트 로고</h1><p>헤더에 있는 잡음 텍스트</p></header>
+  <nav class="navbar"><a href="/a">메뉴1</a><a href="/b">메뉴2</a><a href="/c">메뉴3</a></nav>
+  <div class="ad-banner">광고입니다 광고 문구 광고 문구</div>
+
+  <div class="page-wrapper">
+    <main>
+      <article class="article-body">
+        <h1>실제 기사 제목</h1>
+        <p>첫 번째 단락입니다. 이 문장은 본문으로 추출되어야 합니다. 충분한 길이를 만들기 위해 같은 취지의 문장을 조금 더 이어 씁니다.</p>
+        <h2>소제목 하나</h2>
+        <p>두 번째 단락입니다. <strong>강조된 부분</strong>과 <a href="/link">링크</a>가 섞여 있습니다. 본문 판정을 위해 문장을 더 붙입니다.</p>
+        <ul><li>목록 항목 하나</li><li>목록 항목 둘</li></ul>
+        <pre><code>const x = 1;
+console.log(x);</code></pre>
+        <table>
+          <thead><tr><th>구분</th><th>값</th></tr></thead>
+          <tbody><tr><td>가</td><td>1</td></tr><tr><td>나</td><td>2</td></tr></tbody>
+        </table>
+        <p>마지막 단락입니다. 결론에 해당하는 내용이 들어 있으며 길이를 확보하기 위한 문장을 더 덧붙입니다.</p>
+        <img src="x.png" alt="대체 텍스트가 있는 이미지">
+      </article>
+    </main>
+    <aside class="sidebar related"><h3>관련 기사</h3><a href="/r1">관련1</a><a href="/r2">관련2</a></aside>
+  </div>
+
+  <section id="comments"><h3>댓글</h3><p>댓글 내용은 제외되어야 합니다.</p></section>
+  <div aria-hidden="true">숨겨진 접근성 텍스트</div>
+  <div hidden>hidden 속성 텍스트</div>
+  <footer class="site-footer"><p>푸터 저작권 표기</p></footer>
+  <script>window.__junk = '스크립트 안의 텍스트';</script>
+  <style>.x { color: red }</style>
+</body>
+</html>

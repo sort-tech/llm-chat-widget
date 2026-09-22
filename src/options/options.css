@@ -1,0 +1,283 @@
+:root {
+  --bg: #f4f5f8;
+  --card: #ffffff;
+  --fg: #1a1d24;
+  --fg-muted: #5b657a;
+  --fg-faint: #8b94a6;
+  --line: #e1e5ec;
+  --accent: #4f46e5;
+  --accent-fg: #ffffff;
+  --accent-soft: #eef0ff;
+  --ok: #15803d;
+  --ok-soft: #dcfce7;
+  --danger: #b91c1c;
+  --danger-soft: #fee2e2;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12141a;
+    --card: #1a1d24;
+    --fg: #e8eaf0;
+    --fg-muted: #a3acbd;
+    --fg-faint: #78829a;
+    --line: #2b2f38;
+    --accent: #8b8cf7;
+    --accent-fg: #14161b;
+    --accent-soft: #262a45;
+    --ok: #4ade80;
+    --ok-soft: #14301f;
+    --danger: #f87171;
+    --danger-soft: #3a1d1f;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* 작성자 스타일의 display 선언이 브라우저 기본 [hidden] 규칙을 덮어쓰므로 여기서 다시 막습니다. */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 20px 96px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
+    "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.head h1 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.head p {
+  margin: 2px 0 0;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+.card {
+  margin-bottom: 16px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+
+.card h2 {
+  margin: 0 0 14px;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+.card.muted {
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+.card.muted ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.card.muted li + li {
+  margin-top: 6px;
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+.field > label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.field small {
+  display: block;
+  margin-top: 5px;
+  color: var(--fg-faint);
+  font-size: 11.5px;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="number"],
+select,
+textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.55;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.row > input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.check {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.check input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.btn {
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-sm {
+  padding: 3px 8px;
+  font-size: 11.5px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.btn-ghost {
+  border-color: var(--line);
+  background: var(--card);
+  color: var(--fg-muted);
+}
+
+.btn-ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.result {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.result[data-kind="ok"] {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.result[data-kind="error"] {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.result[data-kind="busy"] {
+  color: var(--fg-muted);
+}
+
+.actions {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.save-state {
+  margin-right: auto;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+}
+
+.save-state[data-kind="saved"] {
+  color: var(--ok);
+}
+
+.save-state[data-kind="dirty"] {
+  color: var(--accent);
+}

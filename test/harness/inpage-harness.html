@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>페이지 내 패널 하네스</title>
+    <style>
+      body { margin: 0; font: 15px/1.7 system-ui, sans-serif; }
+      .page { max-width: 640px; padding: 24px; }
+      button { padding: 8px 14px; font: inherit; }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <h1>가상의 웹페이지</h1>
+      <p>이 페이지는 <code>src/content/panel-host.js</code> 가 오른쪽에 패널을 제대로 띄우고,
+        다시 실행하면 닫는지(토글) 확인하기 위한 것입니다.</p>
+      <p><button id="inject" type="button">panel-host.js 실행 (토글)</button></p>
+      <p id="result"></p>
+      <p id="probe"></p>
+      <p>shadow root 는 closed 이므로 페이지 스크립트에서 내부(iframe 주소 = 확장 ID)를 볼 수 없어야 합니다.</p>
+    </div>
+
+    <script>
+      // panel-host.js 가 쓰는 최소한의 chrome API 만 흉내 냅니다.
+      const widths = {};
+      window.chrome = {
+        runtime: {
+          // 실제 확장 프로그램에서는 chrome-extension:// 주소가 됩니다.
+          getURL: () => '/test/harness/panel-harness.html',
+        },
+        storage: {
+          local: {
+            get: async (key) => (key in widths ? { [key]: widths[key] } : {}),
+            set: async (items) => Object.assign(widths, items),
+          },
+        },
+      };
+      window.__widths = widths;
+    </script>
+    <script>
+      document.getElementById('inject').addEventListener('click', async () => {
+        const source = await fetch('/src/content/panel-host.js').then((r) => r.text());
+        const outcome = eval(source);
+        document.getElementById('result').textContent = JSON.stringify(outcome);
+        window.__lastOutcome = outcome;
+
+        const host = document.getElementById('__page_chatbot_host__');
+        const probe = {
+          hostExists: !!host,
+          shadowRootVisibleToPage: !!host?.shadowRoot, // closed 라면 false 여야 한다
+          framesInPage: window.frames.length,
+          width: host?.style.width ?? null,
+        };
+        window.__probe = probe;
+        document.getElementById('probe').textContent = JSON.stringify(probe);
+      });
+    </script>
+  </body>
+</html>

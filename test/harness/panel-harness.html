@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>패널 하네스</title>
+    <script src="chrome-shim.js"></script>
+    <style>
+      html, body { height: 100%; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      // panel.html 의 <body> 를 그대로 가져와 붙이고 panel.js 를 모듈로 불러옵니다.
+      const html = await fetch('/src/sidepanel/panel.html').then((r) => r.text());
+      const parsed = new DOMParser().parseFromString(html, 'text/html');
+
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = '/src/sidepanel/panel.css';
+      document.head.append(link);
+
+      for (const node of Array.from(parsed.body.childNodes)) {
+        if (node.nodeName === 'SCRIPT') continue;
+        document.body.append(document.importNode(node, true));
+      }
+      for (const img of document.querySelectorAll('img[src^="../../"]')) {
+        img.src = img.getAttribute('src').replace('../../', '/');
+      }
+
+      window.__panelErrors = [];
+      window.addEventListener('error', (e) => window.__panelErrors.push(String(e.message)));
+      window.addEventListener('unhandledrejection', (e) => window.__panelErrors.push(String(e.reason)));
+
+      await import('/src/sidepanel/panel.js');
+      window.__panelReady = true;
+    </script>
+  </body>
+</html>
