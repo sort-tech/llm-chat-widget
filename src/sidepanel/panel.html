@@ -7,14 +7,25 @@
     <link rel="stylesheet" href="panel.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">
-        <img src="../../icons/icon32.png" alt="" width="20" height="20" />
-        <span>페이지 챗봇</span>
-      </div>
+    <!--
+      상단은 한 줄입니다. 브라우저 사이드 패널이 이미 확장 프로그램 이름과 아이콘을
+      헤더에 보여 주므로 내부에서 반복하지 않고, 그 자리를 대화 영역에 돌려줍니다.
+      왼쪽: 상태 점 + 현재 페이지 제목 / 오른쪽: 참조 범위 + 도구 버튼
+    -->
+    <header class="topbar" id="topbar">
+      <span class="ctx-dot" id="ctx-dot" aria-hidden="true"></span>
+      <strong id="ctx-title" class="ctx-title">페이지를 읽는 중…</strong>
+
       <div class="topbar-actions">
-        <label class="sr-only" for="model-select">모델</label>
-        <select id="model-select" class="model-select" title="모델 선택"></select>
+        <label class="sr-only" for="ctx-mode">페이지 참조 범위</label>
+        <select id="ctx-mode" class="mini-select" title="페이지 참조 범위">
+          <option value="page">전체 페이지</option>
+          <option value="selection">선택 영역</option>
+          <option value="off">참조 안 함</option>
+        </select>
+        <button id="btn-refresh" class="icon-btn" type="button" title="페이지 다시 읽기">
+          <span aria-hidden="true">⟳</span><span class="sr-only">페이지 다시 읽기</span>
+        </button>
         <button id="btn-new" class="icon-btn" type="button" title="새 대화 시작">
           <span aria-hidden="true">＋</span><span class="sr-only">새 대화</span>
         </button>
@@ -26,25 +37,6 @@
         </button>
       </div>
     </header>
-
-    <section class="contextbar" id="contextbar">
-      <span class="ctx-dot" id="ctx-dot" aria-hidden="true"></span>
-      <div class="ctx-text">
-        <strong id="ctx-title">페이지를 읽는 중…</strong>
-        <small id="ctx-meta"></small>
-      </div>
-      <div class="ctx-actions">
-        <label class="sr-only" for="ctx-mode">페이지 참조 범위</label>
-        <select id="ctx-mode" title="페이지 참조 범위">
-          <option value="page">전체 페이지</option>
-          <option value="selection">선택 영역</option>
-          <option value="off">사용 안 함</option>
-        </select>
-        <button id="btn-refresh" class="icon-btn" type="button" title="페이지 다시 읽기">
-          <span aria-hidden="true">⟳</span><span class="sr-only">페이지 다시 읽기</span>
-        </button>
-      </div>
-    </section>
 
     <div id="banner" class="banner" role="alert" hidden>
       <div class="banner-text">
@@ -61,24 +53,41 @@
 
     <main id="messages" class="messages" role="log" tabindex="0"></main>
 
-    <p id="status" class="status" aria-live="polite"></p>
-
-    <div id="quick" class="quick"></div>
-
     <footer class="composer">
-      <label class="sr-only" for="input">질문 입력</label>
-      <textarea
-        id="input"
-        class="input"
-        rows="1"
-        placeholder="이 페이지에 대해 물어보세요 · Enter 전송 / Shift+Enter 줄바꿈"
-        autocomplete="off"
-        spellcheck="false"
-      ></textarea>
-      <div class="composer-row">
-        <small id="composer-meta" class="composer-meta"></small>
-        <button id="btn-stop" class="btn btn-ghost" type="button" hidden>중지</button>
-        <button id="btn-send" class="btn btn-primary" type="button">전송</button>
+      <p id="status" class="status" aria-live="polite"></p>
+
+      <!-- 대화가 시작되면 접어 두고, 필요할 때 펴서 씁니다(대화 본문 가시성 우선). -->
+      <div class="quick-wrap">
+        <button id="quick-toggle" class="quick-toggle" type="button" aria-expanded="false" hidden>
+          빠른 질문 <span aria-hidden="true">▾</span>
+        </button>
+        <div id="quick" class="quick"></div>
+      </div>
+
+      <div class="input-wrap">
+        <label class="sr-only" for="input">질문 입력</label>
+        <textarea
+          id="input"
+          class="input"
+          rows="1"
+          placeholder="현재 페이지에 대해 질문하세요…"
+          title="Enter 전송 · Shift+Enter 줄바꿈"
+          autocomplete="off"
+          spellcheck="false"
+        ></textarea>
+        <button id="btn-send" class="send-btn" type="button" title="전송 (Enter)">
+          <span aria-hidden="true">↑</span><span class="sr-only">전송</span>
+        </button>
+        <button id="btn-stop" class="send-btn is-stop" type="button" title="중지 (Esc)" hidden>
+          <span aria-hidden="true">■</span><span class="sr-only">중지</span>
+        </button>
+      </div>
+
+      <div class="composer-meta">
+        <span id="ref-badge" class="ref-badge"></span>
+        <span class="input-hint">Enter 전송 · Shift+Enter 줄바꿈</span>
+        <label class="sr-only" for="model-select">모델</label>
+        <select id="model-select" class="mini-select model-select" title="모델 선택"></select>
       </div>
     </footer>
 

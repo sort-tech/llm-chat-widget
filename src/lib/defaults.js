@@ -59,7 +59,7 @@ export const DEFAULTS = Object.freeze({
 export const CONTEXT_MODES = Object.freeze({
   page: '전체 페이지',
   selection: '선택 영역',
-  off: '사용 안 함',
+  off: '참조 안 함',
 });
 
 export const LIMITS = Object.freeze({

@@ -35,32 +35,63 @@ const els = {
   ctxMode: $('ctx-mode'),
   ctxDot: $('ctx-dot'),
   ctxTitle: $('ctx-title'),
-  ctxMeta: $('ctx-meta'),
+  quickToggle: $('quick-toggle'),
+  refBadge: $('ref-badge'),
   banner: $('banner'),
   bannerTitle: $('banner-title'),
   bannerHint: $('banner-hint'),
   bannerAction: $('banner-action'),
   bannerClose: $('banner-close'),
-  composerMeta: $('composer-meta'),
 };
 
+/**
+ * 빠른 질문.
+ *   label  — 입력창 위 칩에 쓰는 짧은 이름
+ *   card   — 빈 상태 카드에 쓰는 문구(무엇을 해 주는지 한눈에)
+ *   emoji  — 카드 아이콘. onboarding 에서만 씁니다.
+ * card 가 있는 항목만 빈 상태 카드로 보여 줍니다(6개 = 2열 × 3행).
+ */
 const QUICK_PROMPTS = [
-  { label: '요약', prompt: '이 페이지의 핵심 내용을 5줄 이내로 요약해 주세요.' },
-  { label: '핵심 포인트', prompt: '이 페이지에서 가장 중요한 포인트를 불릿으로 정리해 주세요.' },
-  { label: '표로 정리', prompt: '이 페이지의 주요 정보를 표로 정리해 주세요.' },
+  {
+    label: '요약',
+    emoji: '📌',
+    card: '3줄 핵심 요약',
+    prompt: '이 페이지의 핵심 내용을 5줄 이내로 요약해 주세요.',
+  },
+  {
+    label: '핵심 포인트',
+    emoji: '🔑',
+    card: '중요 포인트 뽑기',
+    prompt: '이 페이지에서 가장 중요한 포인트를 불릿으로 정리해 주세요.',
+  },
+  {
+    label: '표로 정리',
+    emoji: '📊',
+    card: '표로 한눈에 정리',
+    prompt: '이 페이지의 주요 정보를 표로 정리해 주세요.',
+  },
   {
     label: '쉽게 설명',
+    emoji: '🌐',
+    card: '쉬운 말로 풀기',
     prompt: '이 페이지 내용을 비전문가도 이해할 수 있게 쉬운 말로 설명해 주세요.',
+  },
+  {
+    label: '용어 정리',
+    emoji: '🗂',
+    card: '나오는 용어 정리',
+    prompt: '이 페이지에 나오는 주요 용어를 뜻과 함께 정리해 주세요.',
+  },
+  {
+    label: '다음 행동',
+    emoji: '➡️',
+    card: '다음에 할 일 제안',
+    prompt: '이 페이지를 읽은 사람이 이어서 확인하거나 실행하면 좋을 일을 제안해 주세요.',
   },
   {
     label: '한국어 번역',
     prompt:
       '이 페이지 본문을 자연스러운 한국어로 번역해 주세요. 분량이 많으면 핵심 단락부터 번역하고 그 사실을 알려 주세요.',
-  },
-  { label: '용어 정리', prompt: '이 페이지에 나오는 주요 용어를 뜻과 함께 정리해 주세요.' },
-  {
-    label: '다음 행동',
-    prompt: '이 페이지를 읽은 사람이 이어서 확인하거나 실행하면 좋을 일을 제안해 주세요.',
   },
 ];
 
@@ -91,6 +122,8 @@ const state = {
   ctxGen: 0,
   /** 진행 중인 모델 목록 요청. 새 요청이 오면 취소합니다. */
   modelsController: null,
+  /** 빠른 질문 칩 줄을 펼쳤는지(대화가 시작되면 기본 접힘). */
+  quickOpen: false,
   /** 탭별 본문 캐시: tabId -> { page, signature, at } */
   pageCache: new Map(),
 };
@@ -112,12 +145,21 @@ const scrollToBottom = () => {
   els.messages.scrollTop = els.messages.scrollHeight;
 };
 
-const setStatus = (text) => {
+const setStatus = (text, tooltip = '') => {
   const queued = state.queuedPrompt ? ' · 대기 중인 요청 1건' : '';
   els.status.textContent = `${text ?? ''}${text ? queued : ''}`;
+  els.status.title = tooltip;
 };
 
 const fmt = (n) => Number(n ?? 0).toLocaleString('ko-KR');
+
+/** 받침 유무에 따라 목적격 조사를 고릅니다('페이지를' / '영역을'). */
+const objectParticle = (word) => {
+  const last = String(word ?? '').trim().slice(-1);
+  const code = last.charCodeAt(0);
+  if (Number.isNaN(code) || code < 0xac00 || code > 0xd7a3) return '를';
+  return (code - 0xac00) % 28 === 0 ? '를' : '을';
+};
 
 /** 근거 표시 관련 안내 — 응답 중에는 진행 상태를 덮지 않습니다. */
 const setCiteStatus = (text) => {
@@ -206,80 +248,93 @@ async function resolveTab() {
   }
 }
 
+/**
+ * 상단 한 줄(상태 점 + 제목)과 입력창 아래 참조 뱃지를 함께 갱신합니다.
+ * 토큰 수 같은 개발자용 수치는 뱃지 본문에 쓰지 않고 마우스 오버(title)로만 보여 줍니다.
+ */
 function renderContextBar(modeOverride) {
   const mode = modeOverride ?? state.settings?.contextMode ?? 'page';
 
+  const setTop = (dot, title, tooltip = '') => {
+    els.ctxDot.dataset.state = dot;
+    els.ctxTitle.textContent = title;
+    els.ctxTitle.title = tooltip || title;
+  };
+  const setBadge = (text, tooltip = '', badgeState = '') => {
+    els.refBadge.textContent = text;
+    els.refBadge.title = tooltip;
+    if (badgeState) els.refBadge.dataset.state = badgeState;
+    else delete els.refBadge.dataset.state;
+  };
+
   if (state.pendingTabId != null) {
-    els.ctxDot.dataset.state = 'loading';
-    els.ctxTitle.textContent = '다른 탭으로 이동했습니다';
-    els.ctxMeta.textContent = '응답이 끝나면 그 탭의 대화로 전환합니다';
+    setTop('loading', '다른 탭으로 이동했습니다', '응답이 끝나면 그 탭의 대화로 전환합니다');
+    setBadge('응답이 끝나면 새 탭으로 전환합니다');
     return;
   }
 
   if (mode === 'off') {
-    els.ctxDot.dataset.state = 'off';
-    els.ctxTitle.textContent = '페이지를 참조하지 않습니다';
-    els.ctxMeta.textContent = '일반 챗봇처럼 동작합니다';
-    els.composerMeta.textContent = '';
+    setTop('off', '페이지를 참조하지 않습니다', '일반 챗봇처럼 동작합니다');
+    setBadge('페이지 참조 안 함', '참조 범위를 바꾸면 현재 페이지를 함께 보냅니다', 'off');
     return;
   }
+
   if (state.pageLoading) {
-    els.ctxDot.dataset.state = 'loading';
-    els.ctxTitle.textContent = '페이지를 읽는 중…';
-    els.ctxMeta.textContent = '';
+    setTop('loading', '페이지를 읽는 중…');
+    setBadge('페이지를 읽는 중…');
     return;
   }
+
   if (state.pageError) {
-    els.ctxDot.dataset.state = 'warn';
-    els.ctxTitle.textContent = '페이지를 읽을 수 없습니다';
-    els.ctxMeta.textContent = state.pageError;
-    els.composerMeta.textContent = '';
+    setTop('warn', '페이지를 읽을 수 없습니다', state.pageError);
+    setBadge(state.pageError, state.pageError, 'off');
     return;
   }
 
   const page = state.page;
   if (!page) {
-    els.ctxDot.dataset.state = 'warn';
-    els.ctxTitle.textContent = '읽은 페이지가 없습니다';
-    els.ctxMeta.textContent = '⟳ 를 눌러 다시 시도하세요';
+    setTop('warn', '읽은 페이지가 없습니다', '⟳ 를 눌러 다시 시도하세요');
+    setBadge('참조할 내용이 없습니다', '⟳ 를 눌러 다시 읽어 보세요', 'off');
     return;
   }
 
   if (!page.text && !page.selection) {
-    els.ctxDot.dataset.state = 'warn';
-    els.ctxTitle.textContent = page.title || '본문을 찾지 못했습니다';
-    els.ctxMeta.textContent = page.hasFrames
+    const why = page.hasFrames
       ? '본문이 내부 프레임(iframe)에 있어 읽지 못했습니다'
       : page.hasShadowRoots
         ? '웹 컴포넌트(shadow DOM) 안에서도 글자를 찾지 못했습니다'
         : 'PDF·이미지이거나 아직 로딩 중일 수 있습니다';
-    els.composerMeta.textContent = '';
+    setTop('warn', page.title || '본문을 찾지 못했습니다', why);
+    setBadge('참조할 내용이 없습니다', why, 'off');
     return;
   }
 
-  els.ctxDot.dataset.state = 'ok';
-  els.ctxTitle.textContent = page.title || page.url || '제목 없음';
-
-  const bits = [];
-  if (mode === 'selection' && page.selection) bits.push(`선택 ${fmt(page.selection.length)}자`);
-  else if (page.selection) bits.push(`선택 ${fmt(page.selection.length)}자 포함`);
-  bits.push(`본문 ${fmt(page.charCount)}자`);
-  if (page.charCount > state.settings.maxContextChars) {
-    bits.push(`${fmt(state.settings.maxContextChars)}자까지 전송`);
-  }
-  els.ctxMeta.textContent = bits.join(' · ');
+  // 정상 — 제목은 위에, 분량·참조 범위는 입력창 아래 뱃지에.
+  const scopeName = mode === 'selection' && page.selection ? '선택 영역' : '전체 페이지';
+  setTop(
+    'ok',
+    page.title || page.url || '제목 없음',
+    [page.title, page.url].filter(Boolean).join('\n'),
+  );
 
   const context = formatPageContext(page, {
     mode,
     maxChars: state.settings.maxContextChars,
     sendUrl: state.settings.sendPageUrl,
   });
-  if (page.truncated || page.depthClipped) {
-    els.ctxMeta.textContent += ' · 본문이 매우 길어 일부만 읽었습니다';
-  }
-  els.composerMeta.textContent = context
-    ? `페이지 컨텍스트 약 ${fmt(approxTokens(context))} 토큰 전송`
-    : '';
+
+  const shown =
+    mode === 'selection' && page.selection ? page.selection.length : Math.min(page.charCount, state.settings.maxContextChars);
+  const tip = [
+    `${scopeName}${objectParticle(scopeName)} 참조합니다`,
+    `본문 ${fmt(page.charCount)}자 중 ${fmt(shown)}자 전송`,
+    context ? `약 ${fmt(approxTokens(context))} 토큰` : '',
+    page.truncated || page.depthClipped ? '본문이 매우 길어 일부만 읽었습니다' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  setBadge(`${scopeName} 참조 중 · ${fmt(shown)}자`, tip);
 }
 
 /**
@@ -498,7 +553,7 @@ async function showCitation(quote, chip) {
     return;
   }
 
-  // 참조 범위가 '사용 안 함' 이면 state.tabUrl 이 비어 있을 수 있으므로 새로 확인합니다.
+  // 참조 범위가 '참조 안 함' 이면 state.tabUrl 이 비어 있을 수 있으므로 새로 확인합니다.
   let url = state.tabUrl;
   try {
     if (!url) url = (await chrome.tabs.get(state.tabId))?.url ?? '';
@@ -578,9 +633,11 @@ function renderCitations(turn, bubble) {
   const box = document.createElement('div');
   box.className = 'cites';
 
+  // 처음 보는 사용자가 단순 태그로 오해하지 않도록, 무엇을 하는 버튼인지 밝힙니다.
   const caption = document.createElement('span');
   caption.className = 'cites-label';
-  caption.textContent = '근거';
+  caption.title = '칩을 누르면 페이지에서 그 문장을 찾아 표시하고 그 위치로 이동합니다.';
+  caption.textContent = '근거 — 누르면 본문 위치로 이동';
   box.append(caption);
 
   for (const quote of quotes) {
@@ -590,8 +647,9 @@ function renderCitations(turn, bubble) {
     chip.title = quote.exact
       ? `페이지에서 찾아 표시: ${quote.text}`
       : `원문과 완전히 같지 않아 앞부분만 확인됨: ${quote.text}`;
-    const label = quote.text.length > 28 ? `${quote.text.slice(0, 28)}…` : quote.text;
-    chip.textContent = quote.exact ? label : `${label} (일부)`;
+    const label = quote.text.length > 26 ? `${quote.text.slice(0, 26)}…` : quote.text;
+    // 📍 는 '위치로 이동' 을 연상시키는 단서입니다(태그가 아니라 버튼임을 알림).
+    chip.textContent = quote.exact ? `📍 ${label}` : `📍 ${label} (일부)`;
     // 클릭 피드백 후 되돌릴 이름을 DOM 이 아닌 dataset 에 보관합니다.
     chip.dataset.label = chip.textContent;
     if (!quote.exact) chip.dataset.exact = 'false';
@@ -732,23 +790,44 @@ function enhanceCodeBlocks(bubble) {
 function renderWelcome() {
   const box = document.createElement('div');
   box.className = 'welcome';
-  const h = document.createElement('h2');
-  h.textContent = '이 페이지를 함께 읽습니다';
-  const p = document.createElement('p');
-  p.style.margin = '0';
-  p.textContent =
-    '아래 버튼을 누르거나 직접 질문을 입력하세요. 답변은 현재 탭에서 읽은 본문을 근거로 만들어집니다.';
-  const ul = document.createElement('ul');
-  for (const text of [
-    '“요약”으로 시작하면 빠르게 감을 잡을 수 있습니다.',
-    '페이지에서 원하는 부분을 선택한 뒤 참조 범위를 “선택 영역”으로 바꾸면 그 부분만 봅니다.',
-    '모델·서버 주소·API 키는 오른쪽 위 ⚙ 에서 바꿉니다.',
-  ]) {
-    const li = document.createElement('li');
-    li.textContent = text;
-    ul.append(li);
+
+  const heading = document.createElement('h2');
+  heading.textContent = '이 페이지를 함께 읽습니다';
+  const lead = document.createElement('p');
+  lead.textContent = '아래를 눌러 바로 시작하거나, 직접 질문을 입력하세요.';
+  box.append(heading, lead);
+
+  // 타이핑 없이 첫 질문을 던질 수 있게 카드로 배치합니다.
+  const cards = document.createElement('div');
+  cards.className = 'welcome-cards';
+  for (const item of QUICK_PROMPTS.filter((entry) => entry.card)) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'welcome-card';
+    card.title = item.prompt;
+    card.disabled = state.busy;
+
+    const emoji = document.createElement('span');
+    emoji.className = 'emoji';
+    emoji.textContent = item.emoji ?? '💬';
+    emoji.setAttribute('aria-hidden', 'true');
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = item.card;
+
+    card.append(emoji, label);
+    card.addEventListener('click', () => send(item.prompt));
+    cards.append(card);
   }
-  box.append(h, p, ul);
+  box.append(cards);
+
+  const note = document.createElement('p');
+  note.className = 'welcome-note';
+  note.textContent =
+    '페이지에서 원하는 부분을 선택한 뒤 위쪽 참조 범위를 “선택 영역”으로 바꾸면 그 부분만 봅니다.';
+  box.append(note);
+
   els.messages.replaceChildren(box);
 }
 
@@ -769,6 +848,7 @@ function renderAll() {
   }
   els.messages.replaceChildren(fragment);
   scrollToBottom();
+  updateQuickVisibility();
 }
 
 function appendTurn(turn) {
@@ -790,6 +870,7 @@ function appendTurn(turn) {
   state.nodes.set(turn.id, node);
   els.messages.append(node.wrap);
   if (stick) scrollToBottom();
+  updateQuickVisibility();
 }
 
 function updateTurn(turn, { force = false } = {}) {
@@ -839,6 +920,7 @@ function setBusy(busy) {
   els.stop.hidden = !busy;
   els.input.disabled = false; // 응답 중에도 다음 질문을 미리 적을 수 있게 둡니다.
   for (const button of els.quick.querySelectorAll('button')) button.disabled = busy;
+  for (const card of els.messages.querySelectorAll('.welcome-card')) card.disabled = busy;
 
   // 방금 누른 버튼이 disabled 가 되면 포커스가 사라져 키보드 조작이 끊깁니다.
   if (busy && (active === els.send || active?.closest?.('#quick'))) els.stop.focus();
@@ -899,7 +981,7 @@ async function send(text, { contextMode, selectionText, fromInput = false } = {}
   const started = Date.now();
   try {
     // 질문 시점의 화면 내용을 쓰도록 매번 새로 읽습니다.
-    // 이번 요청의 참조 범위를 함께 넘겨야 '사용 안 함' 설정에서도
+    // 이번 요청의 참조 범위를 함께 넘겨야 '참조 안 함' 설정에서도
     // 우클릭 "선택한 내용 묻기" 가 선택 영역을 보낼 수 있습니다.
     if (effective.contextMode !== 'off') await refreshContext(effective.contextMode);
 
@@ -945,12 +1027,12 @@ async function send(text, { contextMode, selectionText, fromInput = false } = {}
         ? []
         : findCitations(answer.content, [page?.selection, page?.text].filter(Boolean).join('\n\n'));
 
+    // 토큰 수는 일반 사용자에게 불필요한 인지 부하이므로 툴팁으로만 보여 줍니다.
     const seconds = (answer.ms / 1000).toFixed(1);
     const usage = result.usage;
     setStatus(
-      usage?.total_tokens
-        ? `완료 · ${seconds}초 · ${fmt(usage.total_tokens)} 토큰`
-        : `완료 · ${seconds}초`,
+      `완료 · ${seconds}초`,
+      usage?.total_tokens ? `사용 토큰 ${fmt(usage.total_tokens)}` : '',
     );
   } catch (error) {
     const described = describeError(error, {
@@ -1016,6 +1098,7 @@ async function newChat() {
   if (state.busy) state.controller?.abort();
   state.turns = [];
   state.nodes.clear();
+  state.quickOpen = false;
   renderAll();
   setStatus('');
   hideBanner();
@@ -1092,9 +1175,35 @@ function renderQuick() {
     button.type = 'button';
     button.textContent = item.label;
     button.title = item.prompt;
+    button.disabled = state.busy;
     button.addEventListener('click', () => send(item.prompt));
     els.quick.append(button);
   }
+  updateQuickVisibility();
+}
+
+/**
+ * 빈 상태에서는 카드가 그 역할을 하므로 칩 줄을 숨깁니다.
+ * 대화가 시작되면 기본적으로 접어 두고(대화 본문 가시성 우선) 토글로 펼칩니다.
+ */
+function updateQuickVisibility() {
+  const hasConversation = state.turns.length > 0;
+  els.quickToggle.hidden = !hasConversation;
+  // 빈 상태: 카드가 이미 크게 보여 주므로 칩 줄은 숨깁니다(중복 제거).
+  // 대화 시작 후: 기본 접힘 — 토글로 펼칩니다.
+  els.quick.hidden = !hasConversation || !state.quickOpen;
+  els.quickToggle.setAttribute('aria-expanded', String(Boolean(state.quickOpen)));
+  els.quickToggle.title = state.quickOpen ? '빠른 질문 접기' : '빠른 질문 펼치기';
+  const arrow = els.quickToggle.querySelector('span[aria-hidden]');
+  if (arrow) arrow.textContent = state.quickOpen ? '▴' : '▾';
+  if (!els.quick.hidden) updateQuickFade();
+}
+
+/** 오른쪽에 더 있는지 알리는 페이드 — 끝까지 스크롤하면 걷습니다. */
+function updateQuickFade() {
+  const el = els.quick;
+  const atEnd = el.scrollWidth - el.scrollLeft - el.clientWidth < 4;
+  el.dataset.atEnd = String(atEnd);
 }
 
 /* ------------------------------------------------------- 대기 중 요청 */
@@ -1165,6 +1274,13 @@ function wireUi() {
   els.settings.addEventListener('click', openOptions);
   els.refresh.addEventListener('click', () => refreshContext(undefined, { force: true }));
   els.bannerClose.addEventListener('click', hideBanner);
+
+  els.quickToggle.addEventListener('click', () => {
+    state.quickOpen = !state.quickOpen;
+    updateQuickVisibility();
+  });
+  els.quick.addEventListener('scroll', updateQuickFade, { passive: true });
+  window.addEventListener('resize', updateQuickFade);
 
   els.input.addEventListener('input', autoGrow);
   els.input.addEventListener('keydown', (event) => {
@@ -1267,7 +1383,9 @@ async function init() {
   // 컨텍스트 메뉴는 "패널 열기" 를 먼저 하고 요청 저장을 그 뒤에 하므로,
   // 아주 빠르게 열린 경우를 대비해 한 번 더 확인합니다.
   setTimeout(() => consumePending(), 400);
-  els.input.focus();
+  // 빈 상태에서는 포커스를 두지 않습니다. 포커스가 있으면 입력창 아래가
+  // 단축키 힌트로 바뀌어, 첫 화면에서 "무엇을 참조 중인지" 가 가려집니다.
+  if (state.turns.length > 0) els.input.focus();
 }
 
 init().catch((error) => {

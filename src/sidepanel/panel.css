@@ -81,77 +81,25 @@ body {
 
 /* ------------------------------------------------------------ 상단 바 */
 
+/*
+ * 한 줄만 씁니다. 브라우저 사이드 패널 헤더에 이미 확장 프로그램 이름·아이콘이
+ * 있으므로 내부에서 반복하지 않고, 그 수직 공간을 대화 영역에 돌려줍니다.
+ * 왼쪽: 상태 점 + 현재 페이지 제목 / 오른쪽: 참조 범위 + 도구 버튼
+ */
 .topbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 5px 8px 5px 10px;
   border-bottom: 1px solid var(--line);
   background: var(--bg-soft);
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 650;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  min-width: 0;
-}
-
-.model-select {
-  max-width: 132px;
-  padding: 3px 6px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--fg-muted);
-  font-size: 11.5px;
-  text-overflow: ellipsis;
-}
-
-.icon-btn {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--fg-muted);
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.icon-btn:hover {
-  background: var(--bg-sunken);
-  color: var(--fg);
-}
-
-/* --------------------------------------------------------- 컨텍스트 바 */
-
-.contextbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
-}
-
 .ctx-dot {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--fg-faint);
 }
@@ -176,15 +124,9 @@ body {
   }
 }
 
-.ctx-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+.ctx-title {
   flex: 1 1 auto;
-  line-height: 1.35;
-}
-
-.ctx-text strong {
+  min-width: 0;
   overflow: hidden;
   font-size: 12px;
   font-weight: 600;
@@ -192,28 +134,47 @@ body {
   white-space: nowrap;
 }
 
-.ctx-text small {
-  color: var(--fg-faint);
-  font-size: 10.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ctx-actions {
+.topbar-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   flex: 0 0 auto;
 }
 
-.ctx-actions select {
-  padding: 3px 4px;
+/* 좁은 폭에서도 버티는 아주 작은 드롭다운 */
+.mini-select {
+  max-width: 96px;
+  padding: 2px 4px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--bg);
   color: var(--fg-muted);
-  font-size: 11px;
+  font: inherit;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+}
+
+.mini-select:hover {
+  color: var(--fg);
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: var(--bg-sunken);
+  color: var(--fg);
 }
 
 /* -------------------------------------------------------------- 배너 */
@@ -285,24 +246,89 @@ body {
   outline-offset: -2px;
 }
 
+/* ---------------------------------------------------- 빈 상태(온보딩) */
+
+/*
+ * 읽기만 하는 안내문 대신 곧바로 누를 수 있는 카드를 놓습니다.
+ * 타이핑 없이 첫 질문을 던지게 하는 것이 목표입니다.
+ */
 .welcome {
-  padding: 14px;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-soft);
-  color: var(--fg-muted);
-  font-size: 12.5px;
+  padding: 2px 0 0;
 }
 
 .welcome h2 {
-  margin: 0 0 6px;
+  margin: 0 0 3px;
   color: var(--fg);
   font-size: 13.5px;
 }
 
-.welcome ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
+.welcome p {
+  margin: 0 0 10px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.welcome-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+/* 아주 좁은 패널에서는 한 열로 */
+@media (max-width: 330px) {
+  .welcome-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.welcome-card {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
+}
+
+.welcome-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.welcome-card:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.welcome-card:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.welcome-card .emoji {
+  flex: 0 0 auto;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.welcome-card .label {
+  min-width: 0;
+  font-weight: 600;
+}
+
+.welcome-note {
+  margin: 10px 0 0;
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .msg {
@@ -580,20 +606,64 @@ body {
 
 .status {
   margin: 0;
-  padding: 0 12px;
+  padding: 3px 2px 0;
   color: var(--fg-faint);
   font-size: 11px;
   min-height: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* -------------------------------------------------------- 빠른 질문 */
 
+/* -------------------------------------------------------- 빠른 질문 */
+
+.quick-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0 6px;
+}
+
+.quick-toggle {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.quick-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .quick {
   display: flex;
   gap: 5px;
-  padding: 4px 10px 6px;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
+  /* 오른쪽에 더 있다는 것을 알리는 페이드(스크롤바를 숨겼기 때문에 필요) */
+  mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent 100%);
+}
+
+/* 끝까지 스크롤했으면 페이드를 걷습니다. */
+.quick[data-at-end="true"] {
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+.quick[hidden] {
+  display: none;
 }
 
 .quick::-webkit-scrollbar {
@@ -626,18 +696,24 @@ body {
 /* --------------------------------------------------------- 입력 영역 */
 
 .composer {
-  padding: 8px 10px 10px;
+  flex: 0 0 auto;
+  padding: 2px 10px 8px;
   border-top: 1px solid var(--line);
   background: var(--bg-soft);
+}
+
+/* 전송 버튼을 입력창 안에 넣어 빈 행 하나를 없앱니다. */
+.input-wrap {
+  position: relative;
 }
 
 .input {
   display: block;
   width: 100%;
   max-height: 160px;
-  padding: 8px 10px;
+  padding: 9px 40px 9px 11px; /* 오른쪽은 전송 버튼 자리 */
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 12px;
   background: var(--bg);
   color: var(--fg);
   font: inherit;
@@ -650,14 +726,47 @@ body {
   outline: none;
 }
 
-.composer-row {
+.send-btn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+
+.send-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.send-btn.is-stop {
+  background: var(--danger);
+  color: #fff;
+  font-size: 9px;
+}
+
+/* 참조 상태 뱃지 + 모델(칩) — 한 줄, 아주 얇게 */
+.composer-meta {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
+  margin-top: 5px;
+  min-height: 16px;
 }
 
-.composer-meta {
+.ref-badge,
+.input-hint {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -667,33 +776,31 @@ body {
   white-space: nowrap;
 }
 
-.btn {
-  padding: 5px 12px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
+.ref-badge[data-state="off"] {
+  color: var(--fg-faint);
+  opacity: 0.8;
 }
 
-.btn-primary {
-  background: var(--accent);
-  color: var(--accent-fg);
+/* 단축키 안내는 입력창에 포커스가 있을 때만 — 평소에는 참조 상태를 보여 줍니다. */
+.input-hint {
+  display: none;
 }
 
-.btn-primary:disabled {
-  opacity: 0.45;
-  cursor: default;
+.composer:focus-within .ref-badge {
+  display: none;
 }
 
-.btn-ghost {
+.composer:focus-within .input-hint {
+  display: block;
+}
+
+.model-select {
+  flex: 0 0 auto;
+  max-width: 110px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.model-select:hover {
   border-color: var(--line);
-  background: var(--bg);
-  color: var(--fg-muted);
-}
-
-.btn-ghost:hover {
-  border-color: var(--danger);
-  color: var(--danger);
 }

@@ -33,11 +33,13 @@ and installs on **Chrome** and **Microsoft Edge**, including on Windows.
   with your question, so answers are grounded in what you are looking at.
 - If the page is long it **picks only the paragraphs relevant to your question**, so an answer
   buried in the middle of a long document is still found.
-- Click an **evidence chip** under an answer and the extension highlights that sentence on the
-  page and scrolls to it.
+- Click an **evidence chip** (📍) under an answer and the extension highlights that sentence on
+  the page and scrolls to it.
 - Choose how much of the page to send: `전체 페이지` (whole page) / `선택 영역` (selection only) /
-  `사용 안 함` (don't reference the page).
+  `참조 안 함` (don't reference the page).
 - Answers stream in and are rendered as Markdown (tables, code blocks, lists).
+- On an empty panel, six one-tap action cards (summarize, key points, table, plain language,
+  glossary, next steps) let you start without typing.
 - Conversations are kept **per tab**; switching tabs switches to that tab's conversation.
   They are gone when you close the browser.
 - Select text, right-click, and pick `선택한 내용을 페이지 챗봇에 묻기` ("ask the chatbot about the
@@ -131,19 +133,20 @@ Only the `user` message is whatever you typed.
 | Action | How |
 | --- | --- |
 | Open the panel | Click the toolbar icon, or `Alt+Shift+C` |
-| Send a question | `Enter` (never fires while a Korean IME is composing) |
+| Send a question | `Enter`, or the ↑ button inside the input box (never fires while a Korean IME is composing) |
 | New line | `Shift+Enter` |
-| Stop generating | The `중지` (Stop) button, or `Esc` |
+| Stop generating | The ■ button inside the input box, or `Esc` |
 | Check the evidence | Click an evidence chip under the answer → the sentence is highlighted on the page and scrolled into view (`(일부)` means only the beginning matched) |
 | Clear highlights | `표시 지우기` ("clear highlights") on the evidence row |
-| Re-read the page | `⟳` on the context bar (ignores the cache and extracts again) |
+| Re-read the page | `⟳` on the top bar (ignores the cache and extracts again) |
 | New conversation | `＋` at the top |
-| Use only a selection | Select text on the page, then set the scope to `선택 영역` |
+| Use only a selection | Select text on the page, then set the scope to `선택 영역` on the top bar |
 | Change the shortcut | `chrome://extensions/shortcuts` (Edge: `edge://extensions/shortcuts`) |
 
-Quick-prompt buttons: 요약 (summarize) · 핵심 포인트 (key points) · 표로 정리 (as a table) ·
-쉽게 설명 (explain simply) · 한국어 번역 (translate to Korean) · 용어 정리 (glossary) ·
-다음 행동 (suggested next steps).
+Quick prompts: 요약 (summarize) · 핵심 포인트 (key points) · 표로 정리 (as a table) ·
+쉽게 설명 (explain simply) · 용어 정리 (glossary) · 다음 행동 (next steps) ·
+한국어 번역 (translate to Korean). They appear as cards on an empty panel; once a conversation
+starts they collapse behind a `빠른 질문` toggle above the input box so the transcript keeps the space.
 
 ### Two panel positions
 
@@ -195,6 +198,18 @@ tools/validate.mjs          pre-install checks (syntax, paths, CSP, injected fun
 tools/dev-server.mjs        dev server + fake LiteLLM (for the harness)
 tools/pack.mjs              zip for store upload
 ```
+
+### Layout notes
+
+The panel is built for a narrow, short viewport, so the chrome is kept to two thin rows:
+
+- **One top bar** — status dot, current page title, then the scope dropdown and the ⟳ / ＋ / ⚙
+  buttons. The extension name is not repeated here because the browser's own side-panel header
+  already shows it.
+- **One line under the input box** — a reference badge (`전체 페이지 참조 중 · 1,034자`) and the
+  model chip. Character/token details live in the badge's tooltip rather than on screen, and the
+  line switches to the keyboard hint while the input box has focus.
+- The send button (↑) sits inside the input box, which removes a whole row of padding.
 
 ## 5. How it works
 
@@ -280,14 +295,14 @@ The harness and fixtures are for verification only; `npm run zip` does not inclu
 | `... 에 연결하지 못했습니다` ("could not connect to ...") | Is LiteLLM running (`litellm --config config.yaml --port 4000`)? Are the host and port right? |
 | `서버 오류 401` (server error 401) | Does the API key match the one the server issued? |
 | `서버 오류 404` (server error 404) | Does the model name match `model_name` in `config.yaml`? Does your server need `/v1` in the URL? |
-| Answers arrive but ignore the page | Is the dot on the context bar green, and is the scope something other than `사용 안 함` ("don't reference the page")? |
+| Answers arrive but ignore the page | Is the dot on the top bar green, and is the scope something other than `참조 안 함` ("don't reference the page")? Hover the badge under the input box to see exactly how much is being sent |
 | `브라우저 내부 페이지…는 읽을 수 없습니다` ("browser-internal pages cannot be read") | Extensions cannot read `chrome://`, `edge://` or store pages (browser policy) |
 | Local files (`file://`) are not read | Enable **Allow access to file URLs** on the extension's details page |
 | A PDF yields no text | Text in the built-in PDF viewer cannot be extracted; select the part you need and use selection mode |
 | The side panel never opens | Upgrade to browser version 116+, or switch to `페이지 안에 떠 있는 패널` in the options |
 | Clicking the icon does nothing | In in-page-panel mode, injection is blocked on pages like `chrome://`. Try an ordinary web page |
 | The in-page panel is blank | Rarely, a browser may also require the iframe's sub-resources to be web-accessible. Add `"src/sidepanel/panel.css"`, `"src/sidepanel/panel.js"` and `"src/lib/*.js"` to `web_accessible_resources.resources` in `manifest.json` and reload |
-| The content lives in an iframe | Every frame is read and the longest body wins. If it is still empty, the context bar explains why |
+| The content lives in an iframe | Every frame is read and the longest body wins. If it is still empty, hover the top-bar title to see why |
 
 Extension pages may call any host listed in `host_permissions` without CORS restrictions, so
 LiteLLM needs no special CORS configuration. If requests are still blocked, check the service
@@ -306,7 +321,7 @@ DevTools (right-click the panel → Inspect).
 - Conversations live in `chrome.storage.session` per tab and disappear when the browser closes.
   Closing a tab deletes that tab's conversation.
 - The `<all_urls>` permission is what makes "read whatever page I am on and answer" possible. If
-  you do not need that, set the scope to `사용 안 함`.
+  you do not need that, set the scope to `참조 안 함`.
 
 **Page content is treated as untrusted.** Because a web page ends up inside the prompt, the
 extension assumes pages will try to instruct the model (prompt injection):
