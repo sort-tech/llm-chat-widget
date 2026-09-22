@@ -35,6 +35,9 @@ and installs on **Chrome** and **Microsoft Edge**, including on Windows.
   buried in the middle of a long document is still found.
 - Click an **evidence chip** (📍) under an answer and the extension highlights that sentence on
   the page and scrolls to it.
+- **`본문 입력` ("insert into the page")** puts an answer straight into a form on the page —
+  a comment box, a mail body, a ticket field. If your cursor is already in a box it goes there;
+  otherwise you pick the spot by clicking it on the page.
 - Choose how much of the page to send: `전체 페이지` (whole page) / `선택 영역` (selection only) /
   `참조 안 함` (don't reference the page).
 - Answers stream in and are rendered as Markdown (tables, code blocks, lists).
@@ -138,6 +141,7 @@ Only the `user` message is whatever you typed.
 | Stop generating | The ■ button inside the input box, or `Esc` |
 | Check the evidence | Click an evidence chip under the answer → the sentence is highlighted on the page and scrolled into view (`(일부)` means only the beginning matched) |
 | Clear highlights | `표시 지우기` ("clear highlights") on the evidence row |
+| Insert an answer into the page | `본문 입력` in the answer's tool row. With a cursor already in a box it inserts immediately; otherwise a banner appears on the page and you click the box you want (`Esc` cancels) |
 | Re-read the page | `⟳` on the top bar (ignores the cache and extracts again) |
 | New conversation | `＋` at the top |
 | Use only a selection | Select text on the page, then set the scope to `선택 영역` on the top bar |
@@ -175,6 +179,7 @@ src/
     extract.js              body-text extraction (injected; returns its result)
     probe.js                cheap "is the page unchanged?" check (for the cache)
     highlight.js            finds quoted sentences and highlights them (CSS Custom Highlight API)
+    insert.js               puts an answer into a page input (picker overlay, framework-safe writes)
     panel-host.js           injects/toggles the in-page panel iframe
   lib/
     defaults.js             default settings and storage keys
@@ -186,7 +191,7 @@ src/
     markdown.js             Markdown → safe HTML (pure)
     pages.js                decides whether a page can be scripted
 test/
-  *.test.js                 Node unit and integration tests (142)
+  *.test.js                 Node unit and integration tests (153)
   fixtures/                 sample pages for extraction checks (normal / awkward markup / shadow DOM)
   harness/                  dev harness that runs the UI without installing the extension
     chrome-shim.js          fake chrome.* API (tab switches, frames, queued prompts)
@@ -194,6 +199,7 @@ test/
     options-harness.html    options page
     inpage-harness.html     in-page panel
     citation-check.html     automated highlight checks (8 cases)
+    insert-check.html       automated insert checks (10 cases)
 tools/validate.mjs          pre-install checks (syntax, paths, CSP, injected functions are self-contained)
 tools/dev-server.mjs        dev server + fake LiteLLM (for the harness)
 tools/pack.mjs              zip for store upload
@@ -254,6 +260,30 @@ same sentence occurs several times it prefers the **visible one in the main cont
 not jump to a duplicate in a table of contents, a menu or a hidden block). The page DOM is never
 modified.
 
+### Inserting an answer into the page
+
+`본문 입력` is handled by [src/content/insert.js](src/content/insert.js), injected into **every
+frame** (a composer often lives in an `<iframe>`).
+
+- The answer is converted to plain text first, so `**`, `#` and backticks do not land in a form
+  field. Structure survives: lists stay `- item`, tables stay `a | b`, code keeps its line breaks,
+  and links become `text (url)`.
+- Only fields that can actually take text are offered: `<textarea>`, text-like `<input>`
+  (text/search/url/email/tel) and `[contenteditable]`. Read-only, disabled, password, number,
+  checkbox and invisible fields are skipped.
+- **Framework-safe writes.** Assigning to `element.value` leaves React's own value tracker in
+  sync, so React concludes nothing changed and drops the text on submit. The extension calls the
+  **prototype's native setter** and then dispatches `input` and `change` itself.
+- **Rich editors** (Notion, Slack, Gmail) get `document.execCommand('insertText')` instead of DOM
+  surgery, which keeps their formatting tree and undo history intact.
+- If your cursor was already in the box, the text is inserted **at the caret** so what you had
+  written is not overwritten. If the extension focused the box for you, it appends at the end.
+- The picker overlay lives in a **closed shadow root** at the maximum z-index with
+  `pointer-events: none`, so it cannot be covered by the page and does not swallow clicks.
+  The click that selects a box is intercepted, so the site's own links and form submits do not fire.
+- `Esc`, switching tabs, or picking again removes the overlay and every listener. A 60-second
+  timeout is the last resort if the panel closes mid-pick.
+
 ## 6. Development
 
 ```bash
@@ -279,7 +309,8 @@ You can verify rendering and streaming without loading the extension.
 3. `/test/harness/options-harness.html` — options page
 4. `/test/harness/inpage-harness.html` — in-page panel
 5. `/test/harness/citation-check.html` — automated highlight checks (8 cases)
-6. Open `/test/fixtures/article.html` and paste this into the DevTools console to see exactly what
+6. `/test/harness/insert-check.html` — automated insert checks (10 cases)
+7. Open `/test/fixtures/article.html` and paste this into the DevTools console to see exactly what
    the extractor returns:
 
 ```js
@@ -350,6 +381,9 @@ extension assumes pages will try to instruct the model (prompt injection):
 - **Very long pages**: the body is truncated to the configured budget. Relevant paragraphs are
   selected, falling back to first-and-last when the question gives no clue. Highlight search scans
   the first 300,000 characters.
+- **Inserting into the page**: works on real form fields only. Editors that draw their own
+  surface (Google Docs' canvas renderer, Figma) cannot be targeted — the panel then says so and
+  offers a copy button. Content inside a *closed* shadow root is also out of reach.
 - **Evidence highlighting**: works only on text the browser has rendered. Text inside canvases,
   images or PDFs cannot be highlighted, and neither can a quote the model rewrote (a matching
   prefix is enough, though). Reloading the page clears the highlights.

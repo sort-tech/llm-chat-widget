@@ -357,6 +357,89 @@ export function renderMarkdown(source) {
   return vault.restore(html);
 }
 
+/**
+ * 마크다운을 폼에 넣을 평문으로 바꿉니다.
+ *
+ * stripMarkdown 과 달리 **구조를 살립니다** — 목록·표·코드·줄바꿈을 유지해야
+ * 게시판이나 메일 본문에 붙여도 읽을 수 있습니다.
+ * (`**`, `#`, 백틱 같은 기호만 걷어냅니다.)
+ *
+ * @param {string} source
+ * @returns {string}
+ */
+export function toPlainText(source) {
+  const lines = String(source ?? '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n');
+
+  const out = [];
+  let inFence = false;
+
+  const inline = (text) =>
+    text
+      // 이미지는 대체 텍스트만, 링크는 "글자 (주소)" 로
+      .replace(/!\[([^\]\n]*)\]\([^)\s]*(?:\s+"[^"]*")?\)/g, '$1')
+      .replace(/\[([^\]\n]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g, (match, label, url) => {
+        const text2 = label.trim();
+        if (!text2) return url;
+        return text2 === url ? url : `${text2} (${url})`;
+      })
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/(^|\W)__([^_]+)__(?!\w)/g, '$1$2')
+      .replace(/\*([^*\n]+)\*/g, '$1')
+      .replace(/(^|\W)_([^_\n]+)_(?!\w)/g, '$1$2')
+      .replace(/~~([^~]+)~~/g, '$1');
+
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+
+    // 코드 블록: 펜스만 걷고 내용은 그대로 둡니다.
+    if (/^\s{0,3}(```+|~~~+)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+
+    // 표의 구분선(| --- | :--: |)은 평문에서 의미가 없습니다.
+    if (/^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(line) && line.includes('-') && /[|:]/.test(line)) {
+      continue;
+    }
+
+    let text = line
+      .replace(/^\s{0,3}#{1,6}\s+/, '') // 제목
+      .replace(/^\s{0,3}>\s?/, '') // 인용
+      .replace(/^(\s*)[-*+]\s+\[([ xX])\]\s+/, (m, indent, mark) =>
+        `${indent}- ${mark.toLowerCase() === 'x' ? '[완료] ' : '[ ] '}`,
+      )
+      .replace(/^(\s*)[-*+]\s+/, '$1- ') // 목록 기호 통일
+      .replace(/^\s{0,3}([-*_])\s*(?:\1\s*){2,}$/, ''); // 구분선
+
+    // 표 행은 셀 구분을 남겨 둡니다(| a | b | → a | b).
+    if (/^\s*\|.*\|\s*$/.test(text)) {
+      text = text
+        .replace(/^\s*\|/, '')
+        .replace(/\|\s*$/, '')
+        .split('|')
+        .map((cell) => inline(cell.trim()))
+        .join(' | ');
+      out.push(text);
+      continue;
+    }
+
+    out.push(inline(text));
+  }
+
+  return out
+    .join('\n')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /** 사람이 읽는 평문만 필요할 때(예: 클립보드 미리보기) 사용합니다. */
 export function stripMarkdown(source) {
   return String(source ?? '')

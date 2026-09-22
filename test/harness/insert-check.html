@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>본문 입력 자동 점검</title>
+    <style>
+      body { font: 14px/1.6 system-ui, sans-serif; margin: 0; }
+      #panel { position: fixed; inset: 0 0 auto 0; z-index: 9; padding: 10px 14px;
+               background: #111827; color: #e5e7eb; font: 12px/1.5 ui-monospace, monospace;
+               white-space: pre; max-height: 60vh; overflow: auto; }
+      #stage { margin-top: 62vh; padding: 16px; }
+      .pass { color: #4ade80 } .fail { color: #f87171 }
+      textarea, input { width: 260px; font: inherit; }
+      .rich { min-height: 40px; width: 260px; border: 1px solid #ccc; padding: 4px; }
+      .hidden { display: none }
+    </style>
+  </head>
+  <body>
+    <pre id="panel">실행 중…</pre>
+    <div id="stage"></div>
+
+    <script type="module">
+      const stage = document.getElementById('stage');
+      stage.innerHTML = `
+        <p><textarea id="plain" rows="2"></textarea></p>
+        <p><textarea id="mid" rows="2">앞부분뒷부분</textarea></p>
+        <p><input id="react" type="text" /></p>
+        <p><div id="rich" class="rich" contenteditable="true">기존 내용</div></p>
+        <p>
+          <input id="ro" type="text" value="읽기 전용" readonly />
+          <input id="dis" type="text" value="비활성" disabled />
+          <input id="pw" type="password" value="secret" />
+          <input id="cb" type="checkbox" />
+          <input id="hid" class="hidden" type="text" />
+          <input id="num" type="number" value="1" />
+        </p>
+        <p><iframe id="frame" src="/test/fixtures/inputs-frame.html" style="width:280px;height:90px"></iframe></p>`;
+
+      const el = (id) => document.getElementById(id);
+
+      // React 의 value 트래커 흉내 — 인스턴스 세터가 쓰이면 기록됩니다.
+      const probe = { instanceSetterUsed: false, inputValues: [], changeCount: 0 };
+      const reactInput = el('react');
+      const protoDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+      Object.defineProperty(reactInput, 'value', {
+        configurable: true,
+        get() { return protoDesc.get.call(this); },
+        set(v) { probe.instanceSetterUsed = true; protoDesc.set.call(this, v); },
+      });
+      reactInput.addEventListener('input', (e) => probe.inputValues.push(e.target.value));
+      reactInput.addEventListener('change', () => { probe.changeCount += 1; });
+
+      const frame = el('frame');
+      await new Promise((r) => (frame.complete ? r() : (frame.onload = r)));
+
+      const m = await import('/src/content/insert.js');
+      const lines = [];
+      let failed = 0;
+      const check = (name, ok, detail) => {
+        if (!ok) failed += 1;
+        lines.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `\n      ${detail}` : ''}`);
+      };
+
+      /* 1. 후보 필터링 — 넣을 수 있는 칸만 세는지 (plain·mid·react·rich = 4) */
+      document.activeElement?.blur?.();
+      const probed = m.runInsert({ mode: 'auto', text: 'X' });
+      check(
+        '후보 수(넣을 수 있는 칸 4개만)',
+        probed.status === 'needsPick' && probed.count === 4,
+        `status=${probed.status} count=${probed.count}`,
+      );
+
+      /* 1-b. 제외 대상은 포커스를 줘도 삽입되지 않아야 함 */
+      const excluded = [];
+      for (const id of ['ro', 'dis', 'pw', 'cb', 'hid', 'num']) {
+        const node = el(id);
+        const before = node.value;
+        try {
+          node.focus();
+        } catch {
+          /* disabled 는 포커스되지 않습니다 */
+        }
+        const result = m.runInsert({ mode: 'auto', text: '들어가면 안 됨' });
+        const changed = node.value !== before;
+        if (result.status === 'inserted' || changed) excluded.push(`${id}(${result.status})`);
+      }
+      check(
+        '제외 대상(readonly·disabled·password·checkbox·hidden·number)에는 넣지 않음',
+        excluded.length === 0,
+        excluded.length ? `들어간 곳: ${excluded.join(', ')}` : '6종 모두 차단',
+      );
+
+      /* 2. 포커스된 칸에 바로 삽입 */
+      el('plain').focus();
+      const r2 = m.runInsert({ mode: 'auto', text: '삽입된 답변' });
+      check(
+        '포커스된 칸에 즉시 삽입',
+        r2.status === 'inserted' && el('plain').value === '삽입된 답변',
+        `status=${r2.status} value="${el('plain').value}"`,
+      );
+
+      /* 3. 커서 중간 삽입 — 덮어쓰지 않아야 함 */
+      const mid = el('mid');
+      mid.focus();
+      mid.setSelectionRange(3, 3);
+      m.runInsert({ mode: 'auto', text: '[끼움]' });
+      check(
+        '이어붙이기(문장 중간에 삽입, 덮어쓰지 않음)',
+        mid.value === '앞부분[끼움]뒷부분',
+        `value="${mid.value}"`,
+      );
+
+      /* 4. 삽입 직후 커서가 삽입 텍스트 뒤 — 바로 타이핑 가능 */
+      check(
+        '삽입 후 커서가 삽입 텍스트 뒤',
+        mid.selectionStart === 3 + '[끼움]'.length && document.activeElement === mid,
+        `caret=${mid.selectionStart} focused=${document.activeElement === mid}`,
+      );
+
+      /* 5. React 식 상태 동기화 */
+      reactInput.focus();
+      m.runInsert({ mode: 'auto', text: '리액트 값' });
+      check(
+        'React 상태 동기화(프로토타입 세터 + input/change)',
+        probe.instanceSetterUsed === false &&
+          probe.inputValues.length === 1 &&
+          probe.inputValues[0] === '리액트 값' &&
+          probe.changeCount === 1,
+        `instanceSetterUsed=${probe.instanceSetterUsed} input=${JSON.stringify(probe.inputValues)} change=${probe.changeCount}`,
+      );
+
+      /* 6. 리치 에디터: 포커스가 없던 칸은 끝에 붙어야 함 */
+      const rich = el('rich');
+      let richInputs = 0;
+      rich.addEventListener('input', () => { richInputs += 1; });
+      document.activeElement?.blur?.();
+      const r6 = m.runInsert({ mode: 'pick', text: ' 덧붙임' });   // pick 모드로 오버레이만 켜고
+      m.runInsert({ mode: 'cancel' });                              // 바로 정리한 뒤 직접 확인
+      rich.blur();
+      // 포커스가 없는 상태에서 직접 삽입되는 경로를 auto 로 확인(활성 요소를 rich 로 만들지 않음)
+      const beforeRich = rich.textContent;
+      rich.focus();
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(rich);
+      range.collapse(true);                                          // 맨 앞에 커서
+      selection.removeAllRanges();
+      selection.addRange(range);
+      m.runInsert({ mode: 'auto', text: '[앞]' });
+      check(
+        '리치 에디터: 커서가 있으면 그 위치에 삽입',
+        rich.textContent.startsWith('[앞]') && richInputs > 0,
+        `text="${rich.textContent}" inputEvents=${richInputs} (이전="${beforeRich}")`,
+      );
+
+      /* 7. iframe 안의 입력창 — 같은 함수가 그 문서에서도 동작해야 함 */
+      const innerDoc = frame.contentDocument;
+      const innerArea = innerDoc.getElementById('inframe');
+      innerArea.focus();
+      const r7 = frame.contentWindow.eval(`(${m.runInsert.toString()})({mode:'auto', text:'프레임 안 답변'})`);
+      check(
+        'iframe 안의 입력창에 삽입',
+        r7.status === 'inserted' && innerArea.value === '프레임 안 답변',
+        `status=${r7.status} value="${innerArea.value}"`,
+      );
+
+      /* 8. 선택 모드: 오버레이가 생기고 취소하면 잔상이 없어야 함 */
+      document.activeElement?.blur?.();
+      const r8 = m.runInsert({ mode: 'pick', text: 'Y' });
+      const overlayAfterStart = !!document.getElementById('__page_chatbot_inserter__');
+      const cleanupRegistered = typeof globalThis.__pageChatbotInsertCleanup === 'function';
+      m.runInsert({ mode: 'cancel' });
+      const overlayAfterCancel = !!document.getElementById('__page_chatbot_inserter__');
+      const cleanupCleared = globalThis.__pageChatbotInsertCleanup === undefined;
+      check(
+        '선택 모드 시작/취소 — 오버레이·리스너 잔상 없음',
+        r8.status === 'picking' && overlayAfterStart && cleanupRegistered && !overlayAfterCancel && cleanupCleared,
+        `start=${r8.status} overlay(start)=${overlayAfterStart} overlay(cancel)=${overlayAfterCancel} cleanupCleared=${cleanupCleared}`,
+      );
+
+      /* 9. 입력창이 없는 문서 */
+      const blank = document.createElement('iframe');
+      blank.srcdoc = '<canvas width="100" height="40"></canvas>';
+      blank.style.cssText = 'position:fixed;left:-9999px;width:200px;height:80px';
+      document.body.append(blank);
+      await new Promise((r) => (blank.onload = r));
+      const r9 = blank.contentWindow.eval(`(${m.runInsert.toString()})({mode:'auto', text:'Z'})`);
+      blank.remove();
+      check('입력창이 없으면 noTargets', r9.status === 'noTargets', `status=${r9.status}`);
+
+      const panel = document.getElementById('panel');
+      panel.textContent = `${failed === 0 ? '모두 통과' : `${failed}건 실패`}  (총 ${lines.length}건)\n\n${lines.join('\n\n')}`;
+      panel.className = failed === 0 ? 'pass' : 'fail';
+      window.__result = { failed, total: lines.length };
+    </script>
+  </body>
+</html>

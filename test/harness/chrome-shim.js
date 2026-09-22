@@ -46,6 +46,7 @@
   let activeTabId = 1;
   let frames = null; // null 이면 makePage(activeTabId) 하나만 돌려줍니다.
   let textLengthOverride = null; // 페이지가 바뀐 상황을 흉내 낼 때 사용
+  let insertScenario = 'needsPick'; // 'inserted' | 'needsPick' | 'noTargets'
   let selectionOverride = '';
   const calls = []; // executeScript 호출 기록(캐시 동작 확인용)
 
@@ -142,7 +143,20 @@
           return [probe(0)];
         }
 
-        // 하이라이트 함수 주입 — 실제 실행 결과 대신 정해진 값을 돌려줍니다.
+        // 주입 함수 — 실제 실행 대신 정해진 값을 돌려줍니다(함수 이름으로 구분).
+        if (func?.name === 'runInsert') {
+          const mode = args?.[0]?.mode ?? 'auto';
+          calls[calls.length - 1].insertMode = mode;
+          if (mode === 'cancel') return [{ frameId: 0, result: { status: 'cancelled' } }];
+          if (mode === 'pick') {
+            return [{ frameId: 0, result: insertScenario === 'noTargets' ? { status: 'noTargets' } : { status: 'picking', count: 2 } }];
+          }
+          if (insertScenario === 'inserted') {
+            return [{ frameId: 0, result: { status: 'inserted', how: 'focused', editor: 'form' } }];
+          }
+          if (insertScenario === 'noTargets') return [{ frameId: 0, result: { status: 'noTargets' } }];
+          return [{ frameId: 0, result: { status: 'needsPick', count: 2 } }];
+        }
         if (func) {
           return [
             {
@@ -174,6 +188,13 @@
     calls,
     setTextLength(value) {
       textLengthOverride = value;
+    },
+    setInsertScenario(value) {
+      insertScenario = value;
+    },
+    /** 컨텐츠 스크립트가 보내는 선택 결과를 흉내 냅니다. */
+    sendInsertResult(status) {
+      for (const fn of messageListeners) fn({ type: 'insert-result', status }, {}, () => {});
     },
     setSelection(value) {
       selectionOverride = value;

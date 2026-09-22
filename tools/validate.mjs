@@ -186,6 +186,7 @@ for (const file of jsFiles) {
  */
 const INJECTED_FUNCTIONS = {
   'src/content/highlight.js': ['highlightQuotes', 'clearHighlights'],
+  'src/content/insert.js': ['runInsert'],
 };
 
 /** 중괄호 짝을 세어 함수 본문을 잘라냅니다(문자열/주석은 대략적으로 건너뜁니다). */

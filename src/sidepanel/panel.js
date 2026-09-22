@@ -11,9 +11,10 @@ import { loadSettings, saveSettings, onSettingsChanged } from '../lib/settings.j
 import { conversationKey, pendingKey } from '../lib/defaults.js';
 import { chat, describeError, listModels } from '../lib/llm.js';
 import { approxTokens, buildMessages, formatPageContext } from '../lib/context.js';
-import { renderMarkdown } from '../lib/markdown.js';
+import { renderMarkdown, toPlainText } from '../lib/markdown.js';
 import { describeRestriction, isInjectable } from '../lib/pages.js';
 import { clearHighlights, findCitations, highlightQuotes } from '../content/highlight.js';
+import { runInsert } from '../content/insert.js';
 import { isCacheFresh, makeSignature, PAGE_CACHE_TTL, pruneCache } from '../lib/pagecache.js';
 
 /* ------------------------------------------------------------ 요소 참조 */
@@ -124,6 +125,8 @@ const state = {
   modelsController: null,
   /** 빠른 질문 칩 줄을 펼쳤는지(대화가 시작되면 기본 접힘). */
   quickOpen: false,
+  /** 웹페이지에서 입력 위치를 고르는 중인지 — { button, label } */
+  picking: null,
   /** 탭별 본문 캐시: tabId -> { page, signature, at } */
   pageCache: new Map(),
 };
@@ -541,6 +544,131 @@ async function restoreConversation(tabId = state.tabId) {
   state.nodes.clear();
 }
 
+/* ------------------------------------------------------------ 본문 입력 */
+
+/** 현재 탭의 주소를 확인합니다(참조 범위가 off 면 state.tabUrl 이 비어 있을 수 있음). */
+async function currentTabUrl() {
+  if (state.tabUrl) return state.tabUrl;
+  if (state.tabId == null) return '';
+  try {
+    return (await chrome.tabs.get(state.tabId))?.url ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/** 모든 프레임에 주입 명령을 보냅니다(작성 영역이 iframe 안에 있을 수 있으므로). */
+async function runInsertInTab(options) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: state.tabId, allFrames: true },
+    func: runInsert,
+    args: [options],
+  });
+  return (results ?? []).map((entry) => entry?.result).filter(Boolean);
+}
+
+/** 선택 모드를 끄고 오버레이를 모두 치웁니다. */
+async function cancelPicking({ silent = false } = {}) {
+  const picking = state.picking;
+  state.picking = null;
+  if (picking?.button) picking.button.textContent = picking.label;
+  if (state.tabId == null) return;
+  try {
+    await runInsertInTab({ mode: 'cancel' });
+  } catch {
+    /* 탭이 닫혔거나 주입할 수 없는 페이지 */
+  }
+  if (!silent && picking) setStatus('입력을 취소했습니다.');
+}
+
+/**
+ * 답변을 웹페이지 입력창에 넣습니다.
+ *   1) 이미 포커스된 입력창이 있으면 그대로 넣습니다(선택 단계 없음).
+ *   2) 없으면 웹페이지에서 위치를 고르는 선택 모드로 넘어갑니다.
+ *   3) 입력창을 하나도 못 찾으면(캔버스 기반 편집기 등) 복사를 안내합니다.
+ */
+async function insertIntoPage(turn, button) {
+  if (state.tabId == null) {
+    setStatus('현재 탭을 확인할 수 없습니다.');
+    return;
+  }
+  const url = await currentTabUrl();
+  if (!isInjectable(url)) {
+    showBanner({ title: '이 페이지에는 입력할 수 없습니다.', hint: describeRestriction(url) });
+    return;
+  }
+
+  // 마크다운 기호가 폼에 그대로 들어가지 않도록 평문으로 바꿉니다.
+  const text = toPlainText(turn.content);
+  if (!text.trim()) {
+    setStatus('넣을 내용이 없습니다.');
+    return;
+  }
+
+  await cancelPicking({ silent: true });
+  hideBanner();
+
+  let outcomes;
+  try {
+    outcomes = await runInsertInTab({ mode: 'auto', text });
+  } catch (error) {
+    showBanner({ title: '입력 위치를 찾지 못했습니다.', hint: String(error?.message ?? error) });
+    return;
+  }
+
+  if (outcomes.some((outcome) => outcome.status === 'inserted')) {
+    setStatus('입력 완료');
+    return;
+  }
+
+  if (outcomes.length > 0 && outcomes.every((outcome) => outcome.status === 'noTargets')) {
+    showBanner({
+      title: '이 페이지는 자동 입력을 지원하지 않습니다.',
+      hint: '입력할 수 있는 칸을 찾지 못했습니다(구글 문서·피그마처럼 화면을 직접 그리는 편집기). 답변을 복사해 붙여 넣어 주세요.',
+      action: {
+        label: '답변 복사',
+        run: async () => {
+          const ok = await copyText(turn.content);
+          setStatus(ok ? '답변을 복사했습니다.' : '복사하지 못했습니다.');
+          if (ok) hideBanner();
+        },
+      },
+    });
+    return;
+  }
+
+  // 후보가 여러 개 — 웹페이지에서 직접 고르게 합니다.
+  const label = button?.dataset.label ?? button?.textContent ?? '';
+  try {
+    const started = await runInsertInTab({ mode: 'pick', text });
+    if (!started.some((outcome) => outcome.status === 'picking')) {
+      setStatus('입력할 위치를 찾지 못했습니다.');
+      return;
+    }
+  } catch (error) {
+    setStatus(`입력 위치 선택을 시작하지 못했습니다: ${String(error?.message ?? error)}`);
+    return;
+  }
+
+  state.picking = { button, label };
+  if (button) button.textContent = '선택 중…';
+  setStatus('웹페이지에서 입력할 위치를 선택하세요 (취소: ESC)');
+}
+
+/** 컨텐츠 스크립트가 보내는 선택 결과. */
+function onInsertResult(message) {
+  const picking = state.picking;
+  state.picking = null;
+  if (picking?.button) picking.button.textContent = picking.label;
+
+  if (message.status === 'inserted') setStatus('입력 완료');
+  else if (message.status === 'cancelled') setStatus('입력을 취소했습니다.');
+  else setStatus('입력하지 못했습니다. 다른 입력창을 골라 보세요.');
+
+  // 다른 프레임에 남아 있는 오버레이를 정리합니다.
+  if (state.tabId != null) runInsertInTab({ mode: 'cancel' }).catch(() => {});
+}
+
 /* ---------------------------------------------------------- 근거 하이라이트 */
 
 /**
@@ -713,6 +841,17 @@ function fillTools(turn, tools) {
     }, 1200);
   });
   tools.append(copy);
+
+  // 답변을 웹페이지의 입력창에 바로 넣습니다(게시판·메일·댓글 등).
+  if (turn.role === 'assistant' && String(turn.content ?? '').trim() && turn.status !== 'error') {
+    const insert = document.createElement('button');
+    insert.type = 'button';
+    insert.textContent = '본문 입력';
+    insert.dataset.label = '본문 입력';
+    insert.title = '웹페이지의 입력창에 이 답변을 넣습니다. 커서가 있는 칸이 있으면 바로, 없으면 페이지에서 위치를 고릅니다.';
+    insert.addEventListener('click', () => insertIntoPage(turn, insert));
+    tools.append(insert);
+  }
 
   const isLastAssistant =
     turn.role === 'assistant' && state.turns[state.turns.length - 1]?.id === turn.id;
@@ -1247,6 +1386,9 @@ async function switchTab(tabId) {
     return;
   }
 
+  // 다른 탭으로 옮기기 전에 이 탭에 남은 선택 오버레이를 치웁니다.
+  if (state.picking) await cancelPicking({ silent: true });
+
   const gen = ++state.switchGen;
   state.ctxGen += 1; // 진행 중인 컨텍스트 읽기를 폐기합니다.
   await persistConversation(state.tabId, state.turns, state.tabUrl);
@@ -1292,9 +1434,15 @@ function wireUi() {
     }
   });
 
-  // 어디에 포커스가 있어도 Esc 로 생성을 중지할 수 있게 합니다.
+  // 어디에 포커스가 있어도 Esc 로 생성 중지·입력 위치 선택 취소가 되게 합니다.
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && state.busy) {
+    if (event.key !== 'Escape') return;
+    if (state.picking) {
+      event.preventDefault();
+      cancelPicking();
+      return;
+    }
+    if (state.busy) {
       event.preventDefault();
       state.controller?.abort();
     }
@@ -1337,6 +1485,9 @@ function wireUi() {
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === 'pending-prompt' && message.tabId === state.tabId) {
       consumePending();
+    }
+    if (message?.type === 'insert-result') {
+      onInsertResult(message);
     }
     return false;
   });
