@@ -805,21 +805,22 @@ function buildMessageNode(turn) {
   wrap.className = `msg msg-${turn.role}`;
   wrap.dataset.id = turn.id;
 
-  const head = document.createElement('div');
-  head.className = 'msg-head';
-  const who = document.createElement('span');
-  who.textContent = ROLE_LABEL[turn.role] ?? turn.role;
-  const spacer = document.createElement('span');
-  spacer.className = 'spacer';
-  const tools = document.createElement('div');
-  tools.className = 'msg-tools';
-  head.append(who, spacer, tools);
+  // 역할 라벨은 화면에서 지웠습니다(말풍선 모양·정렬로 구분). 다만 화면 낭독기에는
+  // 누가 한 말인지 알려야 하므로 보이지 않는 라벨을 남깁니다.
+  const role = document.createElement('span');
+  role.className = 'sr-only';
+  role.textContent = ROLE_LABEL[turn.role] ?? turn.role;
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
 
-  wrap.append(head, bubble);
-  return { wrap, bubble, tools };
+  // 답변 아래에 **항상 보이는** 액션 줄. 호버해야 나타나면 기능이 있는지조차
+  // 알 수 없어, 사용자가 채팅으로 "알아서 넣어줘" 라고 말하게 됩니다.
+  const actions = document.createElement('div');
+  actions.className = 'msg-actions';
+
+  wrap.append(role, bubble, actions);
+  return { wrap, bubble, actions };
 }
 
 /** 상태(오류 등)에 따라 래퍼 클래스를 맞춥니다. */
@@ -827,11 +828,32 @@ function applyState(turn, node) {
   node.wrap.className = `msg msg-${turn.role}${turn.status === 'error' ? ' msg-error' : ''}`;
 }
 
-function fillTools(turn, tools) {
-  tools.replaceChildren();
+/** 말풍선 아래 액션 줄을 채웁니다(사용자 메시지에는 두지 않습니다). */
+function fillActions(turn, actions) {
+  actions.replaceChildren();
+  const text = String(turn.content ?? '').trim();
+  if (turn.role !== 'assistant' || !text) {
+    actions.hidden = true;
+    return;
+  }
+  actions.hidden = false;
+
+  // 이 확장 프로그램의 핵심 액션이므로 가장 먼저, 눈에 띄게 둡니다.
+  if (turn.status !== 'error') {
+    const insert = document.createElement('button');
+    insert.type = 'button';
+    insert.className = 'msg-action is-primary';
+    insert.textContent = '본문 입력';
+    insert.dataset.label = '본문 입력';
+    insert.title =
+      '웹페이지의 입력창에 이 답변을 넣습니다. 커서가 있는 칸이 있으면 바로, 없으면 페이지에서 위치를 고릅니다.';
+    insert.addEventListener('click', () => insertIntoPage(turn, insert));
+    actions.append(insert);
+  }
 
   const copy = document.createElement('button');
   copy.type = 'button';
+  copy.className = 'msg-action';
   copy.textContent = '복사';
   copy.addEventListener('click', async () => {
     const ok = await copyText(turn.content ?? '');
@@ -840,27 +862,16 @@ function fillTools(turn, tools) {
       copy.textContent = '복사';
     }, 1200);
   });
-  tools.append(copy);
+  actions.append(copy);
 
-  // 답변을 웹페이지의 입력창에 바로 넣습니다(게시판·메일·댓글 등).
-  if (turn.role === 'assistant' && String(turn.content ?? '').trim() && turn.status !== 'error') {
-    const insert = document.createElement('button');
-    insert.type = 'button';
-    insert.textContent = '본문 입력';
-    insert.dataset.label = '본문 입력';
-    insert.title = '웹페이지의 입력창에 이 답변을 넣습니다. 커서가 있는 칸이 있으면 바로, 없으면 페이지에서 위치를 고릅니다.';
-    insert.addEventListener('click', () => insertIntoPage(turn, insert));
-    tools.append(insert);
-  }
-
-  const isLastAssistant =
-    turn.role === 'assistant' && state.turns[state.turns.length - 1]?.id === turn.id;
-  if (isLastAssistant && !state.busy) {
+  const isLast = state.turns[state.turns.length - 1]?.id === turn.id;
+  if (isLast && !state.busy) {
     const again = document.createElement('button');
     again.type = 'button';
+    again.className = 'msg-action';
     again.textContent = '다시 생성';
     again.addEventListener('click', () => regenerate());
-    tools.append(again);
+    actions.append(again);
   }
 }
 
@@ -980,7 +991,7 @@ function renderAll() {
   for (const turn of state.turns) {
     const node = buildMessageNode(turn);
     applyState(turn, node);
-    fillTools(turn, node.tools);
+    fillActions(turn, node.actions);
     paintBubble(turn, node.bubble);
     state.nodes.set(turn.id, node);
     fragment.append(node.wrap);
@@ -999,12 +1010,12 @@ function appendTurn(turn) {
   const previous = state.turns[state.turns.length - 2];
   if (previous) {
     const node = state.nodes.get(previous.id);
-    if (node) fillTools(previous, node.tools);
+    if (node) fillActions(previous, node.actions);
   }
 
   const node = buildMessageNode(turn);
   applyState(turn, node);
-  fillTools(turn, node.tools);
+  fillActions(turn, node.actions);
   paintBubble(turn, node.bubble);
   state.nodes.set(turn.id, node);
   els.messages.append(node.wrap);
@@ -1021,7 +1032,7 @@ function updateTurn(turn, { force = false } = {}) {
   const stick = nearBottom();
   applyState(turn, node);
   paintBubble(turn, node.bubble);
-  fillTools(turn, node.tools);
+  fillActions(turn, node.actions);
   if (stick) scrollToBottom();
 }
 

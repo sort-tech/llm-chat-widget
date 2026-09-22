@@ -141,7 +141,7 @@ Only the `user` message is whatever you typed.
 | Stop generating | The ■ button inside the input box, or `Esc` |
 | Check the evidence | Click an evidence chip under the answer → the sentence is highlighted on the page and scrolled into view (`(일부)` means only the beginning matched) |
 | Clear highlights | `표시 지우기` ("clear highlights") on the evidence row |
-| Insert an answer into the page | `본문 입력` in the answer's tool row. With a cursor already in a box it inserts immediately; otherwise a banner appears on the page and you click the box you want (`Esc` cancels) |
+| Insert an answer into the page | The `본문 입력` button under the answer — always visible, no hover needed. With a cursor already in a box it inserts immediately; otherwise a banner appears on the page and you click the box you want (`Esc` cancels) |
 | Re-read the page | `⟳` on the top bar (ignores the cache and extracts again) |
 | New conversation | `＋` at the top |
 | Use only a selection | Select text on the page, then set the scope to `선택 영역` on the top bar |
@@ -216,6 +216,12 @@ The panel is built for a narrow, short viewport, so the chrome is kept to two th
   model chip. Character/token details live in the badge's tooltip rather than on screen, and the
   line switches to the keyboard hint while the input box has focus.
 - The send button (↑) sits inside the input box, which removes a whole row of padding.
+- **No speaker labels.** Messages carry no "나" / "AI" row; your message is the narrower
+  right-aligned bubble and the answer is the full-width one. Screen readers still get the speaker
+  from a visually hidden label. That is 20px back per message (measured).
+- **Answer actions are always visible** in a row under the answer bubble — `본문 입력` first and
+  tinted, then `복사`, and `다시 생성` on the last answer. They used to appear only on hover, which
+  hid the extension's main action well enough that people asked the chat to insert text for them.
 
 ## 5. How it works
 

@@ -332,49 +332,53 @@ body {
 }
 
 .msg {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
-.msg-head {
+/*
+ * 역할 라벨('나' / 'AI')을 위한 줄은 두지 않습니다. 좁은 패널에서 메시지마다
+ * 한 줄을 잡아먹기 때문입니다. 누가 한 말인지는 말풍선의 모양·정렬로 구분하고,
+ * 화면 낭독기에는 .sr-only 라벨로 알려 줍니다.
+ */
+
+/* 답변 아래 액션 줄 — 호버 없이 항상 보입니다(기능 발견성). */
+.msg-actions {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 3px;
-  color: var(--fg-faint);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
 }
 
-.msg-head .spacer {
-  flex: 1 1 auto;
+.msg-actions[hidden] {
+  display: none;
 }
 
-.msg-tools {
-  display: flex;
-  gap: 2px;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.msg:hover .msg-tools,
-.msg:focus-within .msg-tools {
-  opacity: 1;
-}
-
-.msg-tools button {
-  padding: 1px 5px;
+.msg-action {
+  padding: 3px 9px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 999px;
   background: var(--bg);
   color: var(--fg-muted);
-  font-size: 10.5px;
+  font: inherit;
+  font-size: 11px;
   cursor: pointer;
 }
 
-.msg-tools button:hover {
+.msg-action:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* 핵심 액션은 한눈에 보이게 */
+.msg-action.is-primary {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.msg-action.is-primary:hover {
+  border-color: var(--accent);
 }
 
 .bubble {
@@ -386,8 +390,16 @@ body {
   overflow-wrap: anywhere;
 }
 
+.msg-assistant .bubble {
+  border-bottom-left-radius: 4px;
+}
+
+/* 라벨이 없어도 누구 말인지 알 수 있게, 사용자 말풍선만 오른쪽으로 좁게 둡니다. */
 .msg-user .bubble {
+  max-width: 92%;
+  margin-left: auto;
   border-color: transparent;
+  border-bottom-right-radius: 4px;
   background: var(--user-bg);
   white-space: pre-wrap;
 }
