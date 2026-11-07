@@ -356,7 +356,7 @@
       }
       if (tag === 'IMG') {
         const alt = squash(node.getAttribute('alt'));
-        if (alt) push(`[이미지: ${alt}] `);
+        if (alt) push(`[image: ${alt}] `);
         return;
       }
 

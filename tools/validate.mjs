@@ -63,6 +63,25 @@ if (!manifest.host_permissions?.length) fail('host_permissions 가 비어 있습
 if (manifest.default_locale && !exists(join(ROOT, '_locales'))) {
   fail('default_locale 이 있는데 _locales 디렉터리가 없습니다(브라우저가 설치를 거부합니다).');
 }
+
+// manifest 의 __MSG_키__ 가 모든 언어 사전에 있어야 합니다(없으면 그 언어에서 키가 그대로 보입니다).
+if (exists(join(ROOT, '_locales'))) {
+  const used = [...JSON.stringify(manifest).matchAll(/__MSG_(\w+)__/g)].map((m) => m[1]);
+  for (const lang of readdirSync(join(ROOT, '_locales'))) {
+    const file = join(ROOT, '_locales', lang, 'messages.json');
+    if (!exists(file)) continue;
+    let messages;
+    try {
+      messages = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (error) {
+      fail(`_locales/${lang}/messages.json 을 해석할 수 없습니다: ${error.message}`);
+      continue;
+    }
+    for (const key of used) {
+      if (!messages[key]?.message) fail(`_locales/${lang}/messages.json 에 ${key} 가 없습니다.`);
+    }
+  }
+}
 if (!/^\d+(\.\d+){0,3}$/.test(String(manifest.version))) {
   fail(`manifest.version 형식이 올바르지 않습니다: ${manifest.version}`);
 }
@@ -187,6 +206,7 @@ for (const file of jsFiles) {
 const INJECTED_FUNCTIONS = {
   'src/content/highlight.js': ['highlightQuotes', 'clearHighlights'],
   'src/content/insert.js': ['runInsert'],
+  'src/content/agent-actions.js': ['runPageAction'],
 };
 
 /** 중괄호 짝을 세어 함수 본문을 잘라냅니다(문자열/주석은 대략적으로 건너뜁니다). */

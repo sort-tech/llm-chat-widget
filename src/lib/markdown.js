@@ -10,6 +10,8 @@
  * 따라서 원문에 있던 `<script>` 같은 문자열은 절대 태그로 살아나지 않습니다.
  */
 
+import { t } from './i18n.js';
+
 const ESCAPE_MAP = {
   '&': '&amp;',
   '<': '&lt;',
@@ -88,8 +90,8 @@ function renderInline(raw, vault) {
       const safe = sanitizeUrl(url);
       if (!safe) return match;
       return vault.stash(
-        `<a class="md-image" href="${attr(safe)}" target="_blank" rel="noopener noreferrer nofollow">🖼 ${
-          attr(alt) || '이미지'
+        `<a class="md-image" href="${attr(safe)}" target="_blank" rel="noopener noreferrer nofollow">${
+          attr(alt) || t('md.image')
         }</a>`,
       );
     },
@@ -186,9 +188,10 @@ function renderList(items, vault) {
       const box =
         item.checked === null
           ? ''
-          : `<span class="md-task ${item.checked ? 'is-done' : ''}" aria-hidden="true">${
-              item.checked ? '☑' : '☐'
-            }</span> `;
+          : // 체크 표시는 CSS 가 그립니다. 화면 낭독기에는 상태를 글로 알려 줍니다.
+            `<span class="md-task${item.checked ? ' is-done' : ''}" role="img" aria-label="${
+              t(item.checked ? 'md.done' : 'md.todo')
+            }"></span> `;
       html += `<li>${box}${renderInline(item.text, vault)}${nested}</li>`;
     }
     return html + (ordered ? '</ol>' : '</ul>');
@@ -413,7 +416,7 @@ export function toPlainText(source) {
       .replace(/^\s{0,3}#{1,6}\s+/, '') // 제목
       .replace(/^\s{0,3}>\s?/, '') // 인용
       .replace(/^(\s*)[-*+]\s+\[([ xX])\]\s+/, (m, indent, mark) =>
-        `${indent}- ${mark.toLowerCase() === 'x' ? '[완료] ' : '[ ] '}`,
+        `${indent}- ${mark.toLowerCase() === 'x' ? t('md.doneMark') : '[ ] '}`,
       )
       .replace(/^(\s*)[-*+]\s+/, '$1- ') // 목록 기호 통일
       .replace(/^\s{0,3}([-*_])\s*(?:\1\s*){2,}$/, ''); // 구분선

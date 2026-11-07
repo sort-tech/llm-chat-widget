@@ -33,11 +33,20 @@ and installs on **Chrome** and **Microsoft Edge**, including on Windows.
   with your question, so answers are grounded in what you are looking at.
 - If the page is long it **picks only the paragraphs relevant to your question**, so an answer
   buried in the middle of a long document is still found.
-- Click an **evidence chip** (📍) under an answer and the extension highlights that sentence on
+- Click an **evidence chip** (the one with the pin icon) under an answer and the extension highlights that sentence on
   the page and scrolls to it.
 - **`본문 입력` ("insert into the page")** puts an answer straight into a form on the page —
   a comment box, a mail body, a ticket field. If your cursor is already in a box it goes there;
   otherwise you pick the spot by clicking it on the page.
+- **Agent mode (`에이전트`)** — instead of answering, the AI **operates the browser for you**:
+  it clicks, types, picks from dropdowns, scrolls, navigates, and opens or switches tabs until the
+  instruction is done. Each action shows up as a step list under the answer. Irreversible actions
+  (pay, delete, send, submit…) wait for your approval first.
+- **English and Korean.** The interface follows the browser language (Korean if it starts with
+  `ko`, English otherwise), and answers come back in that language. Override it under
+  `Display → Language` in the options.
+- **Light and dark themes.** The sun/moon button on the top bar switches them; until you pick one
+  it follows the system setting.
 - Choose how much of the page to send: `전체 페이지` (whole page) / `선택 영역` (selection only) /
   `참조 안 함` (don't reference the page).
 - Answers stream in and are rendered as Markdown (tables, code blocks, lists).
@@ -77,7 +86,7 @@ This is how to run it without publishing to a store. The repository folder is th
 3. Click **Load unpacked** and select this folder.
 4. In the extension list, enable "Show in toolbar" for **페이지 챗봇**.
 
-> The options page opens automatically right after installation. To open it later, click ⚙ at the
+> The options page opens automatically right after installation. To open it later, click the settings icon at the
 > top right of the panel.
 
 ## 2. First-run setup
@@ -138,12 +147,14 @@ Only the `user` message is whatever you typed.
 | Open the panel | Click the toolbar icon, or `Alt+Shift+C` |
 | Send a question | `Enter`, or the ↑ button inside the input box (never fires while a Korean IME is composing) |
 | New line | `Shift+Enter` |
-| Stop generating | The ■ button inside the input box, or `Esc` |
+| Stop generating | The stop button inside the input box, or `Esc` |
 | Check the evidence | Click an evidence chip under the answer → the sentence is highlighted on the page and scrolled into view (`(일부)` means only the beginning matched) |
 | Clear highlights | `표시 지우기` ("clear highlights") on the evidence row |
 | Insert an answer into the page | The `본문 입력` button under the answer — always visible, no hover needed. With a cursor already in a box it inserts immediately; otherwise a banner appears on the page and you click the box you want (`Esc` cancels) |
-| Re-read the page | `⟳` on the top bar (ignores the cache and extracts again) |
-| New conversation | `＋` at the top |
+| Agent mode | The `대화 / 에이전트` switch under the input box selects it (the setting is remembered). Then type an instruction (`search "refund policy" in the search box`). Approve or deny on the card that appears for risky actions; `Esc` or the stop button stops at any time |
+| Switch light / dark | The moon (in light mode) or sun (in dark mode) icon on the top bar. Also under `Display → Theme` in the options |
+| Re-read the page | The refresh icon on the top bar (ignores the cache and extracts again) |
+| New conversation | The new-chat (pencil) icon at the top |
 | Use only a selection | Select text on the page, then set the scope to `선택 영역` on the top bar |
 | Change the shortcut | `chrome://extensions/shortcuts` (Edge: `edge://extensions/shortcuts`) |
 
@@ -165,7 +176,8 @@ Switch between them under `패널 위치` ("panel position") in the options page
 ## 4. Layout
 
 ```
-manifest.json               extension definition (Manifest V3)
+manifest.json               extension definition (Manifest V3; name and description via _locales)
+_locales/en, _locales/ko     manifest and in-page-panel strings (browser language)
 package.json                npm scripts (check / test / validate / dev / zip)
 icons/                      16/32/48/128 icons
 src/
@@ -173,6 +185,7 @@ src/
     service-worker.js       toolbar icon, context menus, panel-mode switching
   sidepanel/
     panel.html / .css / .js chatbot UI (shared by the side panel and the in-page iframe)
+    agent-browser.js        agent mode: runs tools against tabs (inject, navigate, wait for load)
   options/
     options.html / .css /.js options page, connection test
   content/
@@ -180,18 +193,24 @@ src/
     probe.js                cheap "is the page unchanged?" check (for the cache)
     highlight.js            finds quoted sentences and highlights them (CSS Custom Highlight API)
     insert.js               puts an answer into a page input (picker overlay, framework-safe writes)
+    agent-actions.js        agent mode: page snapshot with element refs, click/type/select/key/scroll
     panel-host.js           injects/toggles the in-page panel iframe
   lib/
     defaults.js             default settings and storage keys
     settings.js             read/write/normalize settings
-    llm.js                  OpenAI-compatible calls, streaming, error messages
+    llm.js                  OpenAI-compatible calls, streaming, tool calls, error messages
+    agent.js                agent loop: model → tool → result, approvals, step limit (pure)
+    agent-tools.js          tool schemas, risk rules, snapshot formatting, prompt (pure)
     sse.js                  SSE parser (pure)
     context.js              page text → prompt, relevant-paragraph selection (pure)
     pagecache.js            cache signature and freshness rules (pure)
     markdown.js             Markdown → safe HTML (pure)
     pages.js                decides whether a page can be scripted
+    i18n.js                 language detection, t(key, params), data-i18n document translation
+    locales/en.js, ko.js    UI and prompt strings (same keys in both)
+    theme.js                light/dark/system theme switching
 test/
-  *.test.js                 Node unit and integration tests (153)
+  *.test.js                 Node unit and integration tests (190)
   fixtures/                 sample pages for extraction checks (normal / awkward markup / shadow DOM)
   harness/                  dev harness that runs the UI without installing the extension
     chrome-shim.js          fake chrome.* API (tab switches, frames, queued prompts)
@@ -200,6 +219,7 @@ test/
     inpage-harness.html     in-page panel
     citation-check.html     automated highlight checks (8 cases)
     insert-check.html       automated insert checks (10 cases)
+    agent-check.html        automated agent-action checks (33 cases)
 tools/validate.mjs          pre-install checks (syntax, paths, CSP, injected functions are self-contained)
 tools/dev-server.mjs        dev server + fake LiteLLM (for the harness)
 tools/pack.mjs              zip for store upload
@@ -209,7 +229,7 @@ tools/pack.mjs              zip for store upload
 
 The panel is built for a narrow, short viewport, so the chrome is kept to two thin rows:
 
-- **One top bar** — status dot, current page title, then the scope dropdown and the ⟳ / ＋ / ⚙
+- **One top bar** — status dot, current page title, then the scope dropdown and the refresh / new-chat / settings icons
   buttons. The extension name is not repeated here because the browser's own side-panel header
   already shows it.
 - **One line under the input box** — a reference badge (`전체 페이지 참조 중 · 1,034자`) and the
@@ -254,7 +274,7 @@ and cheaply reports the URL, body length, per-frame lengths and a content finger
 changed, the cached body is reused and only the **selection** is refreshed — which avoids
 re-extracting and re-transferring a ~70,000-character body and tens of milliseconds of work on a
 page the size of a Wikipedia article (measured: 69,722 characters, 26–41 ms per extraction). A changed URL,
-length or fingerprint — or pressing `⟳` — triggers a fresh extraction. Empty results and
+length or fingerprint — or pressing the refresh icon — triggers a fresh extraction. Empty results and
 mid-load snapshots are never cached, so a page that renders late is not stuck as "no content".
 
 When an answer finishes, sentences quoted with `"..."` are collected and **only those that really
@@ -290,6 +310,74 @@ frame** (a composer often lives in an `<iframe>`).
 - `Esc`, switching tabs, or picking again removes the overlay and every listener. A 60-second
   timeout is the last resort if the panel closes mid-pick.
 
+### Agent mode
+
+Agent mode uses the model's **tool calling** (OpenAI `tools` / `tool_calls`, which LiteLLM
+translates for Gemini, Claude, etc.). The loop lives in [src/lib/agent.js](src/lib/agent.js):
+
+1. The instruction is sent together with a **snapshot** of the current tab: every visible
+   interactive element gets a number (`[12] button "검색"`, `[3] input[search] "검색어"`), plus
+   the URL, scroll position and the start of the body text.
+2. The model replies with a tool call — `click`, `type`, `select_option`, `press_key`, `scroll`,
+   `hover`, `navigate`, `go_back`, `open_tab`, `list_tabs`, `switch_tab`, `wait` or `read_page`.
+3. [agent-browser.js](src/sidepanel/agent-browser.js) runs it — page actions by injecting
+   [agent-actions.js](src/content/agent-actions.js), navigation through `chrome.tabs` — waits for
+   loading to settle, and returns the result **with a fresh snapshot**, so the model sees what
+   changed without an extra step. Older snapshots are dropped from the prompt so it does not grow
+   with every step.
+4. When the model answers without a tool call, that text becomes the final report.
+
+What happens on the page:
+
+- Actions are **DOM events**, not OS-level mouse and keyboard input. A purple outline briefly marks
+  the element being clicked or typed into so you can follow along.
+- Typing uses the same framework-safe writes as `본문 입력` (native setter + `input` / `change`,
+  `execCommand('insertText')` for rich editors). `submit: true` presses Enter and submits the form
+  if the site does not handle Enter itself.
+- Links with `target="_blank"` are opened by the extension in a new tab (a synthetic click would be
+  popup-blocked), and the agent continues in that tab. If it ends on another tab, the conversation
+  moves with it.
+- Open shadow roots are searched; the extension's own panel and overlays are excluded.
+
+Safeguards:
+
+- **Approval before irreversible actions.** Clicking something named like pay, order, delete,
+  send, submit, post, sign up…, a form's submit button, `type` with submit, or pressing Enter shows
+  an approval card. Focus starts on `거부` (deny) so a stray Enter cannot approve. Options can switch
+  this to "ask before every action that changes the page".
+- **No secrets.** The agent refuses to type into password, card-number, CVC or one-time-code fields
+  and is told to hand those to you. Password values are never included in snapshots.
+- **Step limit** (default 20, options: 3–60). At the limit the model is asked to summarize what it
+  did and what is left.
+- **Prompt injection.** Snapshot text is labeled as page data, not instructions, and the agent's
+  system prompt tells it to ignore instructions found on pages and to stop on logins and CAPTCHAs.
+- `navigate` / `open_tab` accept only `http` and `https`.
+- `Esc` or the stop button stops immediately, including while an approval card is open.
+
+### Languages
+
+[src/lib/i18n.js](src/lib/i18n.js) picks the language from the `language` setting (`auto`, `ko`
+or `en`). `auto` reads `chrome.i18n.getUILanguage()`: Korean if it starts with `ko`, English for
+everything else.
+
+- Every user-facing string lives in [src/lib/locales/en.js](src/lib/locales/en.js) and
+  [ko.js](src/lib/locales/ko.js) under the same key; `t('key', { name })` fills `{name}`
+  placeholders. Static HTML uses `data-i18n`, `data-i18n-title`, `data-i18n-placeholder`,
+  `data-i18n-aria-label` and `data-i18n-html`.
+- **Prompts are localized too** — the default system prompt, the page-context wrapper, the agent's
+  tool descriptions, its system prompt and the screen snapshot — so the model answers in the
+  interface language. A system prompt you edited is left alone; an untouched default (in either
+  language) is swapped for the current language's default. An empty prompt still means "send none".
+- Scripts injected into pages cannot import modules, so the panel passes them their strings as an
+  argument (`msgs`). The in-page panel host and the manifest use `_locales` (browser language).
+- Risky-action detection always checks both Korean and English button names, because a page's
+  language has nothing to do with the interface language.
+- `test/i18n.test.js` fails if the two dictionaries drift apart (keys or placeholders), if any
+  `t('…')` or `data-i18n` key used in `src/` is missing, or if English text contains Hangul.
+
+To add a string: add the key to both locale files, then use `t('key')` (or a `data-i18n`
+attribute). In the harness, `?lang=en` / `?lang=ko` forces a language.
+
 ## 6. Development
 
 ```bash
@@ -300,7 +388,7 @@ npm run dev       # dev server (+ fake LiteLLM) — drive the UI through the har
 npm run zip       # build dist/page-chatbot-<version>.zip
 ```
 
-After changing code, hit reload (⟳) on `chrome://extensions`. If you only touched `panel.js` or
+After changing code, hit the reload button on `chrome://extensions`. If you only touched `panel.js` or
 `panel.css`, closing and reopening the panel is enough.
 
 ### Checking the UI without installing anything
@@ -309,14 +397,18 @@ After changing code, hit reload (⟳) on `chrome://extensions`. If you only touc
 You can verify rendering and streaming without loading the extension.
 
 1. `npm run dev` starts a server on `http://127.0.0.1:8731` that serves the project **and**
-   imitates LiteLLM's `/models` and `/chat/completions` (including SSE), so streaming works with
-   no real server.
+   imitates LiteLLM's `/models` and `/chat/completions` (including SSE and tool calls), so
+   streaming and agent mode work with no real server.
 2. `/test/harness/panel-harness.html` — chatbot panel
 3. `/test/harness/options-harness.html` — options page
 4. `/test/harness/inpage-harness.html` — in-page panel
 5. `/test/harness/citation-check.html` — automated highlight checks (8 cases)
 6. `/test/harness/insert-check.html` — automated insert checks (10 cases)
-7. Open `/test/fixtures/article.html` and paste this into the DevTools console to see exactly what
+7. `/test/harness/agent-check.html` — automated agent-action checks against a real DOM (33 cases)
+8. In the panel harness, switch to `에이전트` and send anything: the fake server plays a scripted
+   run (type into a search box, then click `결제하기`), so you can see the step list and the
+   approval card.
+9. Open `/test/fixtures/article.html` and paste this into the DevTools console to see exactly what
    the extractor returns:
 
 ```js
@@ -339,6 +431,8 @@ The harness and fixtures are for verification only; `npm run zip` does not inclu
 | The side panel never opens | Upgrade to browser version 116+, or switch to `페이지 안에 떠 있는 패널` in the options |
 | Clicking the icon does nothing | In in-page-panel mode, injection is blocked on pages like `chrome://`. Try an ordinary web page |
 | The in-page panel is blank | Rarely, a browser may also require the iframe's sub-resources to be web-accessible. Add `"src/sidepanel/panel.css"`, `"src/sidepanel/panel.js"` and `"src/lib/*.js"` to `web_accessible_resources.resources` in `manifest.json` and reload |
+| Agent mode fails with `서버 오류 400` | The model must support tool calling. Try a model that does (Gemini, GPT-4o, Claude…) and check LiteLLM's logs |
+| The agent clicks but nothing happens | Some sites ignore synthetic (untrusted) events or draw their UI on a canvas. Do that step yourself, then ask the agent to continue |
 | The content lives in an iframe | Every frame is read and the longest body wins. If it is still empty, hover the top-bar title to see why |
 
 Extension pages may call any host listed in `host_permissions` without CORS restrictions, so
@@ -372,6 +466,9 @@ extension assumes pages will try to instruct the model (prompt injection):
   are allowed.
 - The in-page panel is an iframe inside a **closed shadow root**, so page scripts can read neither
   the panel's contents nor the extension ID.
+- **Agent mode acts as you**, with your logged-in sessions. Use it on sites where that is
+  acceptable, keep approvals on for risky actions, and watch the step list. See
+  [Agent mode](#agent-mode) for the safeguards.
 - Exactly one file is exposed through `web_accessible_resources`: the panel HTML. Scripts holding
   settings or keys are not exposed.
 
@@ -393,3 +490,7 @@ extension assumes pages will try to instruct the model (prompt injection):
 - **Evidence highlighting**: works only on text the browser has rendered. Text inside canvases,
   images or PDFs cannot be highlighted, and neither can a quote the model rewrote (a matching
   prefix is enough, though). Reloading the page clears the highlights.
+- **Agent mode**: only the top frame is operated (content inside iframes is not listed), and
+  closed shadow roots are out of reach. Sites that require trusted input events, canvas-drawn UIs
+  and native dialogs (`alert`, file pickers, browser permission prompts) cannot be driven. Each
+  step is a model round trip, so long tasks take a while; there is no screenshot/vision input yet.

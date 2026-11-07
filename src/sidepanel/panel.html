@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>페이지 챗봇</title>
+    <title data-i18n="app.name">페이지 챗봇</title>
     <link rel="stylesheet" href="panel.css" />
   </head>
   <body>
@@ -14,26 +14,30 @@
     -->
     <header class="topbar" id="topbar">
       <span class="ctx-dot" id="ctx-dot" aria-hidden="true"></span>
-      <strong id="ctx-title" class="ctx-title">페이지를 읽는 중…</strong>
+      <strong id="ctx-title" class="ctx-title" data-i18n="ctx.loading">페이지를 읽는 중…</strong>
 
       <div class="topbar-actions">
-        <label class="sr-only" for="ctx-mode">페이지 참조 범위</label>
-        <select id="ctx-mode" class="mini-select" title="페이지 참조 범위">
-          <option value="page">전체 페이지</option>
-          <option value="selection">선택 영역</option>
-          <option value="off">참조 안 함</option>
+        <label class="sr-only" for="ctx-mode" data-i18n="top.scope">페이지 참조 범위</label>
+        <select id="ctx-mode" class="mini-select" title="페이지 참조 범위" data-i18n-title="top.scope">
+          <option value="page" data-i18n="scope.page">전체 페이지</option>
+          <option value="selection" data-i18n="scope.selection">선택 영역</option>
+          <option value="off" data-i18n="scope.off">참조 안 함</option>
         </select>
-        <button id="btn-refresh" class="icon-btn" type="button" title="페이지 다시 읽기">
-          <span aria-hidden="true">⟳</span><span class="sr-only">페이지 다시 읽기</span>
+        <button id="btn-refresh" class="icon-btn" type="button" title="페이지 다시 읽기" data-i18n-title="top.refresh">
+          <span class="ico ico-refresh" aria-hidden="true"></span><span class="sr-only" data-i18n="top.refresh">페이지 다시 읽기</span>
         </button>
-        <button id="btn-new" class="icon-btn" type="button" title="새 대화 시작">
-          <span aria-hidden="true">＋</span><span class="sr-only">새 대화</span>
+        <button id="btn-new" class="icon-btn" type="button" title="새 대화 시작" data-i18n-title="top.newChatTip">
+          <span class="ico ico-compose" aria-hidden="true"></span><span class="sr-only" data-i18n="top.newChat">새 대화</span>
         </button>
-        <button id="btn-settings" class="icon-btn" type="button" title="설정 열기">
-          <span aria-hidden="true">⚙</span><span class="sr-only">설정</span>
+        <button id="btn-theme" class="icon-btn theme-btn" type="button" title="다크 모드로 바꾸기">
+          <span class="ico ico-moon" aria-hidden="true"></span>
+          <span class="sr-only" id="theme-label">다크 모드로 바꾸기</span>
         </button>
-        <button id="btn-close" class="icon-btn" type="button" title="패널 닫기" hidden>
-          <span aria-hidden="true">✕</span><span class="sr-only">닫기</span>
+        <button id="btn-settings" class="icon-btn" type="button" title="설정 열기" data-i18n-title="top.settingsTip">
+          <span class="ico ico-settings" aria-hidden="true"></span><span class="sr-only" data-i18n="top.settings">설정</span>
+        </button>
+        <button id="btn-close" class="icon-btn" type="button" title="패널 닫기" data-i18n-title="top.closeTip" hidden>
+          <span class="ico ico-close" aria-hidden="true"></span><span class="sr-only" data-i18n="top.close">닫기</span>
         </button>
       </div>
     </header>
@@ -45,8 +49,8 @@
       </div>
       <div class="banner-actions">
         <button id="banner-action" class="link-btn" type="button" hidden></button>
-        <button id="banner-close" class="icon-btn" type="button" title="알림 닫기">
-          <span aria-hidden="true">✕</span><span class="sr-only">알림 닫기</span>
+        <button id="banner-close" class="icon-btn" type="button" title="알림 닫기" data-i18n-title="banner.close">
+          <span class="ico ico-close" aria-hidden="true"></span><span class="sr-only" data-i18n="banner.close">알림 닫기</span>
         </button>
       </div>
     </div>
@@ -59,35 +63,46 @@
       <!-- 대화가 시작되면 접어 두고, 필요할 때 펴서 씁니다(대화 본문 가시성 우선). -->
       <div class="quick-wrap">
         <button id="quick-toggle" class="quick-toggle" type="button" aria-expanded="false" hidden>
-          빠른 질문 <span aria-hidden="true">▾</span>
+          <span data-i18n="quick.toggle">빠른 질문</span> <span class="ico ico-chevron" aria-hidden="true"></span>
         </button>
         <div id="quick" class="quick"></div>
       </div>
 
       <div class="input-wrap">
-        <label class="sr-only" for="input">질문 입력</label>
+        <label class="sr-only" for="input" data-i18n="input.label">질문 입력</label>
         <textarea
           id="input"
           class="input"
           rows="1"
           placeholder="현재 페이지에 대해 질문하세요…"
           title="Enter 전송 · Shift+Enter 줄바꿈"
+          data-i18n-title="input.hint"
           autocomplete="off"
           spellcheck="false"
         ></textarea>
-        <button id="btn-send" class="send-btn" type="button" title="전송 (Enter)">
-          <span aria-hidden="true">↑</span><span class="sr-only">전송</span>
+        <button id="btn-send" class="send-btn" type="button" title="전송 (Enter)" data-i18n-title="input.sendTip">
+          <span class="ico ico-send" aria-hidden="true"></span><span class="sr-only" data-i18n="input.send">전송</span>
         </button>
-        <button id="btn-stop" class="send-btn is-stop" type="button" title="중지 (Esc)" hidden>
-          <span aria-hidden="true">■</span><span class="sr-only">중지</span>
+        <button id="btn-stop" class="send-btn is-stop" type="button" title="중지 (Esc)" data-i18n-title="input.stopTip" hidden>
+          <span class="ico ico-stop" aria-hidden="true"></span><span class="sr-only" data-i18n="input.stop">중지</span>
         </button>
       </div>
 
       <div class="composer-meta">
+        <div class="mode-switch" role="radiogroup" aria-label="모드" data-i18n-aria-label="mode.label">
+          <button id="btn-chat" class="mode-option" type="button" role="radio" aria-checked="true"
+            title="대화 — 현재 페이지를 읽고 답합니다" data-i18n-title="mode.chatTip">
+            <span class="ico ico-chat" aria-hidden="true"></span><span data-i18n="mode.chat">대화</span>
+          </button>
+          <button id="btn-agent" class="mode-option" type="button" role="radio" aria-checked="false"
+            title="에이전트 — AI 가 클릭·입력·페이지 이동으로 지시를 직접 수행합니다" data-i18n-title="mode.agentTip">
+            <span class="ico ico-cursor" aria-hidden="true"></span><span data-i18n="mode.agent">에이전트</span>
+          </button>
+        </div>
         <span id="ref-badge" class="ref-badge"></span>
-        <span class="input-hint">Enter 전송 · Shift+Enter 줄바꿈</span>
-        <label class="sr-only" for="model-select">모델</label>
-        <select id="model-select" class="mini-select model-select" title="모델 선택"></select>
+        <span class="input-hint" data-i18n="input.hint">Enter 전송 · Shift+Enter 줄바꿈</span>
+        <label class="sr-only" for="model-select" data-i18n="model.label">모델</label>
+        <select id="model-select" class="mini-select model-select" title="모델 선택" data-i18n-title="model.tip"></select>
       </div>
     </footer>
 

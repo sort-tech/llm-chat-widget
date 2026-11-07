@@ -71,31 +71,57 @@
       border: 0;
       border-radius: 8px;
       cursor: pointer;
-      background: rgba(120, 130, 150, 0.18);
-      color: #475569;
-      font-size: 15px;
-      line-height: 1;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      background: transparent;
+      color: #6b6f7b;
+      transition: background-color 0.15s ease, color 0.15s ease;
     }
-    .close:hover { background: rgba(239, 68, 68, 0.9); color: #fff; }
+    .close:hover { background: rgba(120, 124, 140, 0.16); color: #18181b; }
+    .close:focus-visible { outline: 2px solid #4f46e5; outline-offset: 1px; }
+    .close svg { width: 16px; height: 16px; }
   `;
+
+  // 콘텐츠 스크립트라 모듈을 쓸 수 없으므로 _locales(브라우저 언어)로 번역합니다.
+  const msg = (key, fallback) => {
+    try {
+      return chrome.i18n.getMessage(key) || fallback;
+    } catch {
+      return fallback;
+    }
+  };
 
   const wrap = document.createElement('div');
   wrap.className = 'wrap';
 
   const grip = document.createElement('div');
   grip.className = 'grip';
-  grip.title = '드래그해서 너비 조절';
+  grip.title = msg('hostResize', 'Drag to resize');
 
   const frame = document.createElement('iframe');
-  frame.title = '페이지 챗봇';
+  frame.title = msg('hostFrame', 'Page Chatbot');
   frame.setAttribute('allow', 'clipboard-write');
   frame.src = chrome.runtime.getURL('src/sidepanel/panel.html?embedded=1');
 
   const close = document.createElement('button');
   close.className = 'close';
   close.type = 'button';
-  close.title = '닫기';
-  close.textContent = '✕';
+  close.title = msg('hostClose', 'Close');
+  close.setAttribute('aria-label', close.title);
+  // 패널과 같은 선 아이콘(×)을 SVG 로 직접 그립니다.
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const glyph = document.createElementNS(svgNs, 'svg');
+  glyph.setAttribute('viewBox', '0 0 24 24');
+  glyph.setAttribute('fill', 'none');
+  glyph.setAttribute('stroke', 'currentColor');
+  glyph.setAttribute('stroke-width', '1.75');
+  glyph.setAttribute('stroke-linecap', 'round');
+  glyph.setAttribute('aria-hidden', 'true');
+  const line = document.createElementNS(svgNs, 'path');
+  line.setAttribute('d', 'M6.5 6.5l11 11M17.5 6.5l-11 11');
+  glyph.append(line);
+  close.append(glyph);
   close.addEventListener('click', () => host.remove());
 
   wrap.append(grip, frame, close);

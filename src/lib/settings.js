@@ -1,6 +1,6 @@
 /** chrome.storage.local 에 저장된 설정을 읽고 쓰는 얇은 래퍼. */
 
-import { DEFAULTS, LIMITS, SETTINGS_KEY, CONTEXT_MODES } from './defaults.js';
+import { AGENT_CONFIRM_MODES, DEFAULTS, LIMITS, SETTINGS_KEY, CONTEXT_MODES, THEMES } from './defaults.js';
 
 const clamp = (value, { min, max }) => Math.min(max, Math.max(min, value));
 
@@ -39,6 +39,15 @@ export function normalizeSettings(raw = {}) {
     timeoutMs: Math.round(clamp(toNumber(merged.timeoutMs, DEFAULTS.timeoutMs), LIMITS.timeoutMs)),
     sendPageUrl: Boolean(merged.sendPageUrl),
     panelMode: merged.panelMode === 'inpage' ? 'inpage' : 'sidepanel',
+    agentMode: Boolean(merged.agentMode),
+    agentMaxSteps: Math.round(
+      clamp(toNumber(merged.agentMaxSteps, DEFAULTS.agentMaxSteps), LIMITS.agentMaxSteps),
+    ),
+    agentConfirm: Object.hasOwn(AGENT_CONFIRM_MODES, merged.agentConfirm)
+      ? merged.agentConfirm
+      : DEFAULTS.agentConfirm,
+    theme: Object.hasOwn(THEMES, merged.theme) ? merged.theme : DEFAULTS.theme,
+    language: ['auto', 'ko', 'en'].includes(merged.language) ? merged.language : DEFAULTS.language,
   };
 }
 

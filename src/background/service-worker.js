@@ -6,6 +6,7 @@
 import { loadSettings, saveSettings } from '../lib/settings.js';
 import { conversationKey, pendingKey, SETTINGS_KEY } from '../lib/defaults.js';
 import { isInjectable } from '../lib/pages.js';
+import { resolveLanguage, setLanguage, t } from '../lib/i18n.js';
 
 const MENU = {
   ask: 'page-chatbot-ask-selection',
@@ -23,6 +24,9 @@ const MENU = {
  */
 let panelMode = 'sidepanel';
 
+/** 메뉴 문구의 언어(설정 → 브라우저 언어). 바뀌면 메뉴를 다시 만듭니다. */
+let menuLanguage = null;
+
 async function applyPanelBehavior(settings) {
   panelMode = settings.panelMode;
   const useSidePanel = settings.panelMode !== 'inpage';
@@ -35,7 +39,11 @@ async function applyPanelBehavior(settings) {
 
 // 워커 기동/웨이크업 시 캐시를 채웁니다.
 loadSettings()
-  .then(applyPanelBehavior)
+  .then((settings) => {
+    // 워커가 깨어날 때마다 메뉴 요청 문구의 언어를 맞춥니다(메뉴 자체는 이미 만들어져 있음).
+    menuLanguage = setLanguage(resolveLanguage(settings.language));
+    return applyPanelBehavior(settings);
+  })
   .catch((error) => console.warn('[page-chatbot] 설정 초기화 실패:', error));
 
 /** 사용자 제스처 안에서 곧바로(await 없이) 사이드 패널을 엽니다. */
@@ -71,21 +79,30 @@ async function openInPagePanel(tab) {
 
 /* -------------------------------------------------------- 컨텍스트 메뉴 */
 
+async function syncLanguage(settings) {
+  const lang = setLanguage(resolveLanguage(settings?.language));
+  if (lang !== menuLanguage) {
+    menuLanguage = lang;
+    createMenus();
+  }
+  return lang;
+}
+
 function createMenus() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU.ask,
-      title: '선택한 내용을 페이지 챗봇에 묻기',
+      title: t('menu.ask'),
       contexts: ['selection'],
     });
     chrome.contextMenus.create({
       id: MENU.summarize,
-      title: '이 페이지 요약하기',
+      title: t('menu.summarize'),
       contexts: ['page'],
     });
     chrome.contextMenus.create({
       id: MENU.open,
-      title: '페이지 챗봇 열기',
+      title: t('menu.open'),
       contexts: ['page', 'selection', 'link', 'image'],
     });
     if (chrome.runtime.lastError) {
@@ -109,9 +126,10 @@ async function queuePrompt(tabId, payload) {
 /* ------------------------------------------------------------- 리스너 */
 
 chrome.runtime.onInstalled.addListener((details) => {
-  createMenus();
   (async () => {
     const settings = await loadSettings();
+    menuLanguage = null; // 설치·업데이트 때는 메뉴를 반드시 새로 만듭니다.
+    await syncLanguage(settings);
     await saveSettings(settings); // 기본값을 실제 저장소에 기록해 둡니다.
     await applyPanelBehavior(settings);
     if (details.reason === 'install') {
@@ -121,13 +139,19 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  createMenus();
-  loadSettings().then(applyPanelBehavior);
+  menuLanguage = null;
+  loadSettings().then(async (settings) => {
+    await syncLanguage(settings);
+    await applyPanelBehavior(settings);
+  });
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes[SETTINGS_KEY]) return;
-  loadSettings().then(applyPanelBehavior);
+  loadSettings().then(async (settings) => {
+    await syncLanguage(settings);
+    await applyPanelBehavior(settings);
+  });
 });
 
 // openPanelOnActionClick 이 false 일 때(= 페이지 내 패널 모드)만 호출됩니다.
@@ -151,13 +175,13 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     if (info.menuItemId === MENU.ask) {
       await queuePrompt(tab?.id, {
         intent: 'selection',
-        prompt: '선택한 부분을 이해하기 쉽게 설명해 주세요.',
+        prompt: t('menu.askPrompt'),
         selectionText: info.selectionText ?? '',
       });
     } else if (info.menuItemId === MENU.summarize) {
       await queuePrompt(tab?.id, {
         intent: 'page',
-        prompt: '이 페이지의 핵심 내용을 요약해 주세요.',
+        prompt: t('menu.summarizePrompt'),
       });
     }
     if (panelMode === 'inpage' && !(await openInPagePanel(tab))) openSidePanelNow(tab);

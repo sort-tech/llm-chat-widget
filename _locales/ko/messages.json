@@ -1,0 +1,12 @@
+{
+  "extName": { "message": "페이지 챗봇 (Page Chatbot)" },
+  "extShortName": { "message": "페이지 챗봇" },
+  "extDescription": {
+    "message": "현재 보고 있는 웹페이지를 읽고 그 내용을 근거로 답하거나, 에이전트 모드로 브라우저를 대신 조작하는 사이드 패널 AI 챗봇. LiteLLM 등 OpenAI 호환 서버에 연결됩니다."
+  },
+  "actionTitle": { "message": "페이지 챗봇 열기" },
+  "commandToggle": { "message": "페이지 챗봇 패널 열기/닫기" },
+  "hostResize": { "message": "드래그해서 너비 조절" },
+  "hostFrame": { "message": "페이지 챗봇" },
+  "hostClose": { "message": "닫기" }
+}

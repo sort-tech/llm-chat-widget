@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>에이전트 조작 자동 점검</title>
+    <style>
+      body { font: 14px/1.6 system-ui, sans-serif; margin: 0; }
+      #panel { position: fixed; inset: 0 0 auto 0; z-index: 9; padding: 10px 14px;
+               background: #111827; color: #e5e7eb; font: 12px/1.5 ui-monospace, monospace;
+               white-space: pre; max-height: 45vh; overflow: auto; }
+      #stage { margin-top: 48vh; padding: 16px; }
+      .hidden { display: none }
+      .far { margin-top: 1800px; }
+    </style>
+  </head>
+  <body>
+    <pre id="panel">실행 중…</pre>
+    <div id="stage">
+      <form id="search-form" action="#">
+        <label for="q">검색어</label>
+        <input id="q" name="q" type="search" placeholder="무엇을 찾나요?" />
+        <button id="go" type="submit">검색</button>
+      </form>
+      <p>
+        <input id="react" type="text" aria-label="리액트 입력" />
+        <input id="pw" type="password" aria-label="비밀번호" />
+        <input id="card" type="text" autocomplete="cc-number" aria-label="카드 번호" />
+        <input id="hid" class="hidden" type="text" aria-label="숨김" />
+        <label><input id="agree" type="checkbox" /> 약관 동의</label>
+        <select id="size" aria-label="크기">
+          <option value="s">작음</option>
+          <option value="m">보통</option>
+          <option value="l">큼</option>
+        </select>
+      </p>
+      <div id="rich" contenteditable="true" aria-label="메모" style="border:1px solid #ccc;min-height:30px">기존 메모</div>
+      <div id="fake-btn" role="button" tabindex="0">역할 버튼</div>
+      <a id="ext" href="https://example.com/" target="_blank">새 창 링크</a>
+      <a id="hash" href="#moved">해시 링크</a>
+      <span id="shadow-host"></span>
+      <p class="far"><button id="bottom" type="button">맨 아래 버튼</button></p>
+    </div>
+
+    <script type="module">
+      import { pageActionMessages, runPageAction as rawAction } from '/src/content/agent-actions.js';
+      // 확장 프로그램처럼 현재 언어 문구를 함께 넘깁니다.
+      const runPageAction = (action) => rawAction({ ...action, msgs: pageActionMessages() });
+
+      const out = [];
+      let pass = 0;
+      let fail = 0;
+      const check = (name, cond, extra = '') => {
+        if (cond) pass += 1;
+        else fail += 1;
+        out.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? `  — ${extra}` : ''}`);
+      };
+      const $ = (id) => document.getElementById(id);
+
+      // 열린 shadow root 안의 버튼도 찾아야 합니다.
+      const root = $('shadow-host').attachShadow({ mode: 'open' });
+      root.innerHTML = '<button id="in-shadow" type="button">그림자 버튼</button>';
+
+      // React 처럼 인스턴스 value 세터를 가로채는 입력 — 네이티브 세터를 써야 input 이벤트로 값이 보입니다.
+      const seen = { react: '', submits: 0, clicks: 0, keys: [] };
+      $('react').addEventListener('input', (e) => (seen.react = e.target.value));
+      $('search-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        seen.submits += 1;
+      });
+      $('fake-btn').addEventListener('click', () => (seen.clicks += 1));
+      root.getElementById('in-shadow').addEventListener('click', () => (seen.shadow = true));
+      document.addEventListener('keydown', (e) => seen.keys.push(e.key));
+
+      const snap = runPageAction({ kind: 'snapshot' });
+      const find = (name) => snap.elements.find((el) => el.name === name);
+      check('스냅샷 성공', snap.ok && snap.elements.length > 5, `${snap.elements.length}개`);
+      check('라벨로 이름을 찾는다', find('검색어')?.tag === 'input');
+      check('placeholder 도 남긴다', find('검색어')?.placeholder === '무엇을 찾나요?');
+      check('폼 안 버튼은 submit', find('검색')?.type === 'submit' && find('검색')?.inForm === true);
+      check('숨은 입력은 빠진다', !find('숨김'));
+      check('role=button 포함', Boolean(find('역할 버튼')));
+      check('shadow DOM 버튼 포함', Boolean(find('그림자 버튼')));
+      check('화면 밖 표시', find('맨 아래 버튼')?.inView === false);
+      check('select 선택지', find('크기')?.options?.join(',') === '작음,보통,큼');
+      check('비밀번호 값은 내보내지 않는다', !JSON.stringify(snap).includes('secret'));
+      check('요소에 ref 속성', document.querySelector('[data-pcb-ref]') !== null);
+      check('패널 자신은 빠진다', !snap.elements.some((el) => el.name?.includes('PASS')));
+
+      const ref = (name) => find(name)?.ref;
+
+      let r = runPageAction({ kind: 'type', ref: ref('리액트 입력'), text: '안녕하세요' });
+      check('입력: 값과 input 이벤트', r.ok && $('react').value === '안녕하세요' && seen.react === '안녕하세요', r.error);
+
+      r = runPageAction({ kind: 'type', ref: ref('리액트 입력'), text: '!', clear: false });
+      check('입력: 덧붙이기', $('react').value === '안녕하세요!', $('react').value);
+
+      $('pw').value = 'secret';
+      r = runPageAction({ kind: 'type', ref: ref('비밀번호'), text: 'hunter2' });
+      check('비밀번호 칸은 거부', !r.ok && $('pw').value === 'secret', r.error);
+
+      r = runPageAction({ kind: 'type', ref: ref('카드 번호'), text: '4111' });
+      check('카드번호 칸은 거부', !r.ok && $('card').value === '', r.error);
+
+      r = runPageAction({ kind: 'type', ref: ref('검색어'), text: '환불 정책', submit: true });
+      check('입력 후 제출', r.ok && $('q').value === '환불 정책' && seen.submits === 1, `${r.message} submits=${seen.submits}`);
+
+      r = runPageAction({ kind: 'click', ref: ref('약관 동의') });
+      check('체크박스 클릭 토글', r.ok && $('agree').checked === true, r.error);
+
+      r = runPageAction({ kind: 'click', ref: ref('역할 버튼') });
+      check('role=button 클릭', r.ok && seen.clicks === 1);
+
+      r = runPageAction({ kind: 'click', ref: ref('그림자 버튼') });
+      check('shadow DOM 클릭', r.ok && seen.shadow === true);
+
+      r = runPageAction({ kind: 'click', ref: ref('새 창 링크') });
+      check('새 창 링크는 탭 열기로 넘긴다', r.ok && r.openTab === 'https://example.com/', JSON.stringify(r));
+
+      r = runPageAction({ kind: 'click', ref: ref('해시 링크') });
+      await new Promise((done) => setTimeout(done, 30));
+      check('링크 클릭은 이동한다', location.hash === '#moved', location.hash);
+
+      r = runPageAction({ kind: 'select', ref: ref('크기'), option: '큼' });
+      check('select 표시 이름으로 선택', r.ok && $('size').value === 'l', r.error);
+      r = runPageAction({ kind: 'select', ref: ref('크기'), option: 'm' });
+      check('select value 로 선택', $('size').value === 'm');
+      r = runPageAction({ kind: 'select', ref: ref('크기'), option: '거대' });
+      check('없는 항목은 선택지를 알려 준다', !r.ok && /작음/.test(r.error));
+
+      r = runPageAction({ kind: 'type', ref: ref('메모'), text: '새 메모' });
+      check('contenteditable 입력', r.ok && $('rich').innerText.trim() === '새 메모', $('rich').innerText);
+
+      window.scrollTo(0, 0);
+      r = runPageAction({ kind: 'scroll', direction: 'down' });
+      check('아래로 스크롤', r.ok && window.scrollY > 100, `${r.message} y=${window.scrollY}`);
+      r = runPageAction({ kind: 'scroll', ref: ref('맨 아래 버튼') });
+      const rect = $('bottom').getBoundingClientRect();
+      check('요소까지 스크롤', rect.top >= 0 && rect.bottom <= innerHeight, `top=${Math.round(rect.top)}`);
+
+      r = runPageAction({ kind: 'key', key: 'Escape' });
+      check('키 누르기', r.ok && seen.keys.includes('Escape'));
+
+      r = runPageAction({ kind: 'click', ref: '999' });
+      check('없는 ref 는 다시 읽으라고 안내', !r.ok && /read_page/.test(r.error));
+
+      // 다시 스냅샷하면 번호가 새로 매겨지고 이전 속성은 지워집니다.
+      const again = runPageAction({ kind: 'snapshot' });
+      // querySelectorAll 은 shadow root 안을 보지 않으므로 그 안의 ref 는 따로 셉니다.
+      const tagged =
+        document.querySelectorAll('[data-pcb-ref]').length + root.querySelectorAll('[data-pcb-ref]').length;
+      check('재스냅샷 후 ref 정리', tagged === again.elements.length, `${tagged} / ${again.elements.length}`);
+
+      r = runPageAction({ kind: 'cleanup' });
+      check('cleanup 은 ref 속성을 지운다', r.ok && document.querySelectorAll('[data-pcb-ref]').length === 0);
+
+      r = runPageAction({ kind: 'teleport' });
+      check('알 수 없는 동작은 오류', !r.ok);
+
+      window.scrollTo(0, 0);
+      const summary = `${fail === 0 ? '✓ 모두 통과' : '✗ 실패 있음'} — PASS ${pass} / FAIL ${fail}`;
+      document.getElementById('panel').textContent = `${summary}\n\n${out.join('\n')}`;
+      window.__agentCheck = { pass, fail, out };
+    </script>
+  </body>
+</html>

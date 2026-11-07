@@ -10,6 +10,7 @@
  *   패널:   /test/harness/panel-harness.html
  *   설정:   /test/harness/options-harness.html
  *   페이지 내 패널: /test/harness/inpage-harness.html
+ *   에이전트 점검: /test/harness/agent-check.html
  */
 
 import { createReadStream, statSync } from 'node:fs';
@@ -95,6 +96,37 @@ createServer(async (req, res) => {
     console.log(
       `[fake-litellm] model=${parsed.model} stream=${parsed.stream} messages=${parsed.messages?.length} chars=${body.length}`,
     );
+
+    // 에이전트 모드(도구 정의가 온 요청): 정해진 순서대로 도구를 호출합니다.
+    //   1) 검색창에 입력 → 2) '결제하기' 클릭(승인 카드가 떠야 함) → 3) 최종 보고
+    if (Array.isArray(parsed.tools) || parsed.messages?.some((m) => m.role === 'tool')) {
+      const done = parsed.messages.filter((m) => m.role === 'tool');
+      const toolCall = (name, args) => ({
+        id: `call_${done.length + 1}`,
+        type: 'function',
+        function: { name, arguments: JSON.stringify(args) },
+      });
+      let message;
+      if (!parsed.tools) {
+        message = { role: 'assistant', content: '동작 한도에 도달해 여기까지 정리합니다.' };
+      } else if (done.length === 0) {
+        message = { role: 'assistant', content: null, tool_calls: [toolCall('type', { ref: '1', text: '환불 정책' })] };
+      } else if (done.length === 1) {
+        message = { role: 'assistant', content: null, tool_calls: [toolCall('click', { ref: '2' })] };
+      } else {
+        const denied = /거부/.test(done.at(-1)?.content ?? '');
+        message = {
+          role: 'assistant',
+          content: denied
+            ? '검색창에 **환불 정책**을 입력했습니다. 결제 버튼은 승인이 거부되어 누르지 않았습니다.'
+            : '검색창에 **환불 정책**을 입력하고 결제 버튼을 눌렀습니다.',
+        };
+      }
+      await sleep(250);
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ choices: [{ message, finish_reason: message.tool_calls ? 'tool_calls' : 'stop' }], usage: { total_tokens: 99 } }));
+      return;
+    }
 
     if (!parsed.stream) {
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });

@@ -5,7 +5,8 @@
  * CORS 제약 없이 fetch 할 수 있으므로, 서비스 워커를 거치지 않고 직접 호출합니다.
  */
 
-import { createEventStreamParser, readChunk } from './sse.js';
+import { coerceContent, createEventStreamParser, readChunk } from './sse.js';
+import { t } from './i18n.js';
 
 /* ------------------------------------------------------------------ URL */
 
@@ -29,15 +30,15 @@ export function normalizeBaseUrl(raw) {
 
 export function validateBaseUrl(raw) {
   const normalized = normalizeBaseUrl(raw);
-  if (!normalized) return { ok: false, url: '', reason: '서버 주소가 비어 있습니다.' };
+  if (!normalized) return { ok: false, url: '', reason: t('url.empty') };
   let parsed;
   try {
     parsed = new URL(normalized);
   } catch {
-    return { ok: false, url: normalized, reason: '주소 형식이 올바르지 않습니다.' };
+    return { ok: false, url: normalized, reason: t('url.invalid') };
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return { ok: false, url: normalized, reason: 'http 또는 https 주소만 사용할 수 있습니다.' };
+    return { ok: false, url: normalized, reason: t('url.scheme') };
   }
   return { ok: true, url: normalized, reason: '' };
 }
@@ -90,13 +91,13 @@ export function describeError(error, { baseUrl = '', model = '' } = {}) {
     try {
       return new URL(normalizeBaseUrl(baseUrl)).host;
     } catch {
-      return baseUrl || '서버';
+      return baseUrl || t('err.server');
     }
   })();
 
   if (!(error instanceof LlmError)) {
     return {
-      title: error?.message || '알 수 없는 오류가 발생했습니다.',
+      title: error?.message || t('err.unknown'),
       hint: '',
       kind: 'unknown',
     };
@@ -104,14 +105,14 @@ export function describeError(error, { baseUrl = '', model = '' } = {}) {
 
   const hints = {
     aborted: '',
-    timeout: `${host} 응답이 제한 시간 안에 도착하지 않았습니다. 설정에서 제한 시간을 늘리거나 모델을 확인해 보세요.`,
-    network: `${host} 에 연결할 수 없습니다. LiteLLM 서버가 실행 중인지, 주소와 포트가 맞는지 확인하세요. (예: litellm --config config.yaml --port 4000)`,
-    auth: 'API 키가 거부되었습니다. 설정에서 키를 다시 확인하세요.',
-    notfound: `엔드포인트 또는 모델을 찾을 수 없습니다. 서버 주소(${host})와 모델 이름(${model || '미지정'})이 LiteLLM 설정에 등록된 값인지 확인하세요.`,
-    ratelimit: '요청이 너무 많거나 상위 모델의 쿼터를 초과했습니다. 잠시 후 다시 시도하세요.',
-    server: '서버 내부 오류입니다. LiteLLM 로그를 확인하세요.',
-    badrequest: '요청이 거부되었습니다. 모델 이름과 파라미터(temperature, max_tokens)를 확인하세요.',
-    badresponse: '서버가 예상과 다른 형식으로 응답했습니다. 서버 주소가 OpenAI 호환 엔드포인트인지 확인하세요.',
+    timeout: t('err.hint.timeout', { host }),
+    network: t('err.hint.network', { host }),
+    auth: t('err.hint.auth'),
+    notfound: t('err.hint.notfound', { host, model: model || t('err.unset') }),
+    ratelimit: t('err.hint.ratelimit'),
+    server: t('err.hint.server'),
+    badrequest: t('err.hint.badrequest'),
+    badresponse: t('err.hint.badresponse'),
     config: '',
   };
 
@@ -194,9 +195,9 @@ async function readErrorBody(response) {
 
 function abortToError(deadline, error) {
   if (deadline.reason() === 'timeout') {
-    return new LlmError('요청 제한 시간을 초과했습니다.', { kind: 'timeout', cause: error });
+    return new LlmError(t('err.timeout'), { kind: 'timeout', cause: error });
   }
-  return new LlmError('요청이 취소되었습니다.', { kind: 'aborted', cause: error });
+  return new LlmError(t('err.aborted'), { kind: 'aborted', cause: error });
 }
 
 async function apiFetch(url, { apiKey, body, method = 'POST', deadline, accept }) {
@@ -218,7 +219,7 @@ async function apiFetch(url, { apiKey, body, method = 'POST', deadline, accept }
     });
   } catch (error) {
     if (error?.name === 'AbortError') throw abortToError(deadline, error);
-    throw new LlmError(`${new URL(url).host} 에 연결하지 못했습니다.`, {
+    throw new LlmError(t('err.connect', { host: new URL(url).host }), {
       kind: 'network',
       detail: String(error?.message ?? error),
       cause: error,
@@ -235,7 +236,7 @@ async function apiFetch(url, { apiKey, body, method = 'POST', deadline, accept }
     }
     const { message, detail } = errorBody;
     throw new LlmError(
-      message ? `서버 오류 ${response.status}: ${message}` : `서버 오류 ${response.status}`,
+      message ? t('err.statusMsg', { status: response.status, message }) : t('err.status', { status: response.status }),
       { kind: kindForStatus(response.status), status: response.status, detail },
     );
   }
@@ -244,10 +245,11 @@ async function apiFetch(url, { apiKey, body, method = 'POST', deadline, accept }
 
 /* --------------------------------------------------------------- 요청 본문 */
 
-export function buildRequestBody({ model, messages, temperature, maxTokens, stream }) {
+export function buildRequestBody({ model, messages, temperature, maxTokens, stream, tools }) {
   const body = { model, messages, stream: Boolean(stream) };
   if (Number.isFinite(temperature)) body.temperature = temperature;
   if (Number.isFinite(maxTokens) && maxTokens > 0) body.max_tokens = maxTokens;
+  if (Array.isArray(tools) && tools.length > 0) body.tools = tools;
   return body;
 }
 
@@ -270,7 +272,7 @@ export async function listModels({ baseUrl, apiKey, signal, timeoutMs = 15000 })
       json = await response.json();
     } catch (error) {
       if (error?.name === 'AbortError') throw abortToError(deadline, error);
-      throw new LlmError('모델 목록 응답을 JSON 으로 해석할 수 없습니다.', {
+      throw new LlmError(t('err.modelsJson'), {
         kind: 'badresponse',
         cause: error,
       });
@@ -296,7 +298,7 @@ export async function listModels({ baseUrl, apiKey, signal, timeoutMs = 15000 })
 export async function chat({ settings, messages, signal, onDelta }) {
   const check = validateBaseUrl(settings.baseUrl);
   if (!check.ok) throw new LlmError(check.reason, { kind: 'config' });
-  if (!settings.model) throw new LlmError('모델 이름이 비어 있습니다.', { kind: 'config' });
+  if (!settings.model) throw new LlmError(t('err.noModel'), { kind: 'config' });
 
   const body = buildRequestBody({
     model: settings.model,
@@ -322,7 +324,7 @@ export async function chat({ settings, messages, signal, onDelta }) {
     if (!settings.stream || !isEventStream || !response.body) {
       const json = await response.json().catch((error) => {
         if (error?.name === 'AbortError') throw abortToError(deadline, error);
-        throw new LlmError('응답을 JSON 으로 해석할 수 없습니다.', {
+        throw new LlmError(t('err.json'), {
           kind: 'badresponse',
           cause: error,
         });
@@ -407,7 +409,7 @@ export async function chat({ settings, messages, signal, onDelta }) {
       if (error?.name === 'AbortError') throw abortToError(deadline, error);
       // consume() 이 던진 서버 오류(LlmError)는 그대로 유지합니다.
       if (error instanceof LlmError) throw error;
-      throw new LlmError('응답을 받는 중 연결이 끊겼습니다.', {
+      throw new LlmError(t('err.disconnected'), {
         kind: 'network',
         detail: String(error?.message ?? error),
         cause: error,
@@ -417,6 +419,82 @@ export async function chat({ settings, messages, signal, onDelta }) {
     }
 
     return { text, usage, finishReason, streamed: true };
+  } finally {
+    deadline.cleanup();
+  }
+}
+
+/* ------------------------------------------------------------ 도구 호출 */
+
+/**
+ * 응답의 tool_calls 를 다시 보낼 수 있는 표준 형태로 정리합니다.
+ * arguments 가 객체로 오는 서버도 있어 문자열로 맞추고, id 가 없으면 만들어 줍니다.
+ * (Gemini 의 thought_signature 같은 추가 필드는 그대로 둡니다 — 다음 요청에 필요합니다.)
+ */
+export function normalizeToolCalls(calls) {
+  if (!Array.isArray(calls)) return [];
+  return calls
+    .filter((call) => call && typeof call === 'object' && call.function?.name)
+    .map((call, index) => {
+      const args = call.function.arguments;
+      return {
+        ...call,
+        id: call.id || `call_${Date.now().toString(36)}_${index}`,
+        type: call.type || 'function',
+        function: {
+          ...call.function,
+          arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}),
+        },
+      };
+    });
+}
+
+/**
+ * 도구 정의를 함께 보내는 채팅 완성(스트리밍 없음). 에이전트 모드에서 씁니다.
+ * @returns {Promise<{message:{role:'assistant', content:string|null, tool_calls?:Array}, usage:object|null, finishReason:string|null}>}
+ */
+export async function chatWithTools({ settings, messages, tools, signal }) {
+  const check = validateBaseUrl(settings.baseUrl);
+  if (!check.ok) throw new LlmError(check.reason, { kind: 'config' });
+  if (!settings.model) throw new LlmError(t('err.noModel'), { kind: 'config' });
+
+  const body = buildRequestBody({
+    model: settings.model,
+    messages,
+    temperature: settings.temperature,
+    maxTokens: settings.maxTokens,
+    stream: false,
+    tools,
+  });
+
+  const deadline = createDeadline(signal, settings.timeoutMs);
+  try {
+    const response = await apiFetch(chatCompletionsUrl(check.url), {
+      apiKey: settings.apiKey,
+      body,
+      deadline,
+    });
+    let json;
+    try {
+      json = await response.json();
+    } catch (error) {
+      if (error?.name === 'AbortError') throw abortToError(deadline, error);
+      throw new LlmError(t('err.json'), { kind: 'badresponse', cause: error });
+    }
+    if (json?.error) {
+      const err = json.error;
+      throw new LlmError(typeof err === 'string' ? err : err.message || JSON.stringify(err), {
+        kind: errorFrameKind(json),
+      });
+    }
+    const choice = Array.isArray(json?.choices) ? json.choices[0] : null;
+    if (!choice?.message) {
+      throw new LlmError(t('err.noMessage'), { kind: 'badresponse', detail: truncateDetail(JSON.stringify(json)) });
+    }
+    const toolCalls = normalizeToolCalls(choice.message.tool_calls);
+    const message = { role: 'assistant', content: coerceContent(choice.message.content) || null };
+    if (toolCalls.length > 0) message.tool_calls = toolCalls;
+    return { message, usage: json.usage ?? null, finishReason: choice.finish_reason ?? null };
   } finally {
     deadline.cleanup();
   }

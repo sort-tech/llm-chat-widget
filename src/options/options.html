@@ -3,24 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>페이지 챗봇 설정</title>
+    <title data-i18n="o.docTitle">페이지 챗봇 설정</title>
     <link rel="stylesheet" href="options.css" />
   </head>
   <body>
+    <!-- 문구는 data-i18n 속성의 키로 번역됩니다(src/lib/locales). 여기 적힌 한국어는 스크립트 전 기본값입니다. -->
     <header class="head">
       <img src="../../icons/icon48.png" alt="" width="36" height="36" />
       <div>
-        <h1>페이지 챗봇 설정</h1>
-        <p>LiteLLM(OpenAI 호환) 서버 정보와 답변 방식을 정합니다.</p>
+        <h1 data-i18n="o.title">페이지 챗봇 설정</h1>
+        <p data-i18n="o.lead">LiteLLM(OpenAI 호환) 서버 정보와 답변 방식을 정합니다.</p>
       </div>
     </header>
 
     <main>
       <section class="card">
-        <h2>연결</h2>
+        <h2 data-i18n="o.connection">연결</h2>
 
         <div class="field">
-          <label for="baseUrl">서버 주소</label>
+          <label for="baseUrl" data-i18n="o.baseUrl">서버 주소</label>
           <input
             id="baseUrl"
             type="text"
@@ -28,14 +29,11 @@
             autocomplete="off"
             placeholder="http://localhost:4000"
           />
-          <small
-            >LiteLLM 프록시 주소입니다. <code>/chat/completions</code> 는 자동으로 붙습니다.
-            (예: <code>http://localhost:4000</code>, <code>http://localhost:4000/v1</code>)</small
-          >
+          <small data-i18n-html="o.baseUrlHelp"></small>
         </div>
 
         <div class="field">
-          <label for="apiKey">API 키</label>
+          <label for="apiKey" data-i18n="o.apiKey">API 키</label>
           <div class="row">
             <input
               id="apiKey"
@@ -44,37 +42,38 @@
               autocomplete="off"
               placeholder="sk-..."
             />
-            <button id="toggleKey" class="btn btn-ghost" type="button">표시</button>
+            <button id="toggleKey" class="btn btn-ghost" type="button" data-i18n="opt.show">표시</button>
           </div>
-          <small
-            >이 브라우저 프로필의 확장 프로그램 저장소에 평문으로 보관됩니다. 공용 PC 에서는 사용
-            후 지워 주세요.</small
-          >
+          <small data-i18n="o.apiKeyHelp"></small>
         </div>
 
         <div class="field">
-          <label for="model">모델</label>
+          <label for="model" data-i18n="o.model">모델</label>
           <div class="row">
             <input id="model" type="text" list="modelList" spellcheck="false" autocomplete="off" />
             <datalist id="modelList"></datalist>
-            <button id="loadModels" class="btn btn-ghost" type="button">목록 불러오기</button>
+            <button id="loadModels" class="btn btn-ghost" type="button" data-i18n="o.loadModels">
+              목록 불러오기
+            </button>
           </div>
-          <small>LiteLLM <code>config.yaml</code> 의 <code>model_name</code> 과 같아야 합니다.</small>
+          <small data-i18n-html="o.modelHelp"></small>
         </div>
 
         <div class="field">
-          <button id="testConnection" class="btn btn-primary" type="button">연결 테스트</button>
+          <button id="testConnection" class="btn btn-primary" type="button" data-i18n="o.test">
+            연결 테스트
+          </button>
           <div id="testResult" class="result" hidden></div>
         </div>
       </section>
 
       <section class="card">
-        <h2>답변</h2>
+        <h2 data-i18n="o.answers">답변</h2>
 
         <div class="field">
-          <label for="systemPrompt">시스템 프롬프트</label>
+          <label for="systemPrompt" data-i18n="o.systemPrompt">시스템 프롬프트</label>
           <textarea id="systemPrompt" rows="8" spellcheck="false"></textarea>
-          <small>모든 대화의 맨 앞에 붙는 지시문입니다.</small>
+          <small data-i18n="o.systemPromptHelp"></small>
         </div>
 
         <div class="grid">
@@ -85,88 +84,127 @@
           <div class="field">
             <label for="maxTokens">max_tokens</label>
             <input id="maxTokens" type="number" min="0" max="200000" step="128" />
-            <small>0 = 서버 기본값</small>
+            <small data-i18n="o.maxTokensHelp">0 = 서버 기본값</small>
           </div>
           <div class="field">
-            <label for="timeoutSec">응답 제한 시간(초)</label>
+            <label for="timeoutSec" data-i18n="o.timeout">응답 제한 시간(초)</label>
             <input id="timeoutSec" type="number" min="5" max="600" step="5" />
-            <small>데이터가 들어오는 동안에는 초기화됩니다.</small>
+            <small data-i18n="o.timeoutHelp"></small>
           </div>
           <div class="field">
-            <label for="historyTurns">기억할 이전 메시지 수</label>
+            <label for="historyTurns" data-i18n="o.history">기억할 이전 메시지 수</label>
             <input id="historyTurns" type="number" min="0" max="100" step="2" />
           </div>
         </div>
 
         <label class="check">
           <input id="stream" type="checkbox" />
-          <span>스트리밍으로 받기 (답변이 한 글자씩 나타남)</span>
+          <span data-i18n="o.stream">스트리밍으로 받기 (답변이 한 글자씩 나타남)</span>
         </label>
       </section>
 
       <section class="card">
-        <h2>페이지 참조</h2>
+        <h2 data-i18n="o.pageRef">페이지 참조</h2>
 
         <div class="grid">
           <div class="field">
-            <label for="contextMode">기본 참조 범위</label>
+            <label for="contextMode" data-i18n="o.contextMode">기본 참조 범위</label>
             <select id="contextMode">
-              <option value="page">전체 페이지</option>
-              <option value="selection">선택 영역</option>
-              <option value="off">참조 안 함</option>
+              <option value="page" data-i18n="scope.page">전체 페이지</option>
+              <option value="selection" data-i18n="scope.selection">선택 영역</option>
+              <option value="off" data-i18n="scope.off">참조 안 함</option>
             </select>
           </div>
           <div class="field">
-            <label for="maxContextChars">본문 최대 전송 글자 수</label>
+            <label for="maxContextChars" data-i18n="o.maxChars">본문 최대 전송 글자 수</label>
             <input id="maxContextChars" type="number" min="500" max="200000" step="1000" />
-            <small>길면 앞·뒤를 남기고 가운데를 생략합니다.</small>
+            <small data-i18n="o.maxCharsHelp"></small>
           </div>
         </div>
 
         <label class="check">
           <input id="sendPageUrl" type="checkbox" />
-          <span>페이지 제목·URL 도 함께 보내기</span>
+          <span data-i18n="o.sendUrl">페이지 제목·URL 도 함께 보내기</span>
         </label>
       </section>
 
       <section class="card">
-        <h2>패널 위치</h2>
+        <h2 data-i18n="o.agent">에이전트 모드</h2>
+        <p class="card-lead" data-i18n-html="o.agentLead"></p>
+        <div class="grid">
+          <div class="field">
+            <label for="agentConfirm" data-i18n="o.agentConfirm">실행 전 승인</label>
+            <select id="agentConfirm">
+              <option value="risky" data-i18n="o.agentRisky">위험한 동작만 묻기 (결제·삭제·제출 등)</option>
+              <option value="always" data-i18n="o.agentAlways">화면을 바꾸는 모든 동작마다 묻기</option>
+            </select>
+            <small data-i18n="o.agentConfirmHelp"></small>
+          </div>
+          <div class="field">
+            <label for="agentMaxSteps" data-i18n="o.agentMaxSteps">지시 한 번에 허용할 최대 동작 수</label>
+            <input id="agentMaxSteps" type="number" min="3" max="60" step="1" />
+            <small data-i18n="o.agentMaxStepsHelp"></small>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 data-i18n="o.display">화면</h2>
+        <div class="grid">
+          <div class="field">
+            <label for="language" data-i18n="o.language">언어</label>
+            <select id="language">
+              <option value="auto" data-i18n="o.languageAuto">브라우저 언어 따름</option>
+              <option value="ko">한국어</option>
+              <option value="en">English</option>
+            </select>
+            <small data-i18n="o.languageHelp"></small>
+          </div>
+          <div class="field">
+            <label for="theme" data-i18n="o.theme">테마</label>
+            <select id="theme">
+              <option value="system" data-i18n="o.themeSystem">시스템 설정 따름</option>
+              <option value="light" data-i18n="o.themeLight">라이트</option>
+              <option value="dark" data-i18n="o.themeDark">다크</option>
+            </select>
+            <small data-i18n="o.themeHelp"></small>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 data-i18n="o.panelPos">패널 위치</h2>
         <label class="check">
           <input type="radio" name="panelMode" value="sidepanel" />
-          <span
-            ><strong>브라우저 사이드 패널</strong> — 툴바 아이콘을 누르면 브라우저 오른쪽 사이드바에
-            열립니다. (권장, Chrome/Edge 114 이상)</span
-          >
+          <span data-i18n-html="o.sidepanel"></span>
         </label>
         <label class="check">
           <input type="radio" name="panelMode" value="inpage" />
-          <span
-            ><strong>페이지 안에 떠 있는 패널</strong> — 페이지 오른쪽에 직접 띄웁니다. 너비를 드래그로
-            조절할 수 있습니다.</span
-          >
+          <span data-i18n-html="o.inpage"></span>
         </label>
       </section>
 
       <section class="card muted">
-        <h2>참고</h2>
+        <h2 data-i18n="o.notes">참고</h2>
         <ul>
           <li>
-            단축키는 <code id="shortcutUrl">chrome://extensions/shortcuts</code>
-            (Edge 는 <code>edge://extensions/shortcuts</code>) 에서 바꿉니다.
-            <button id="copyShortcut" class="btn btn-ghost btn-sm" type="button">주소 복사</button>
+            <span data-i18n="o.shortcutBefore">단축키는</span>
+            <code id="shortcutUrl">chrome://extensions/shortcuts</code>
+            <span data-i18n-html="o.shortcutAfter"></span>
+            <button id="copyShortcut" class="btn btn-ghost btn-sm" type="button" data-i18n="opt.copyUrl">
+              주소 복사
+            </button>
           </li>
-          <li>대화 내용은 탭별로 보관되며 브라우저를 닫으면 사라집니다.</li>
-          <li>
-            페이지 본문은 질문할 때마다 새로 읽어 프롬프트에 담기며, 설정한 서버로만 전송됩니다.
-          </li>
+          <li data-i18n="o.noteConversations"></li>
+          <li data-i18n="o.notePage"></li>
         </ul>
       </section>
     </main>
 
     <footer class="actions">
       <span id="saveState" class="save-state"></span>
-      <button id="reset" class="btn btn-ghost" type="button">기본값으로 되돌리기</button>
-      <button id="save" class="btn btn-primary" type="button">저장</button>
+      <button id="reset" class="btn btn-ghost" type="button" data-i18n="o.reset">기본값으로 되돌리기</button>
+      <button id="save" class="btn btn-primary" type="button" data-i18n="o.save">저장</button>
     </footer>
 
     <script type="module" src="options.js"></script>

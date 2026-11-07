@@ -9,7 +9,12 @@
 
 import { loadSettings, saveSettings, onSettingsChanged } from '../lib/settings.js';
 import { conversationKey, pendingKey } from '../lib/defaults.js';
-import { chat, describeError, listModels } from '../lib/llm.js';
+import { formatNumber, localizeDocument, resolveLanguage, setLanguage, t } from '../lib/i18n.js';
+import { chat, chatWithTools, describeError, listModels } from '../lib/llm.js';
+import { runAgent } from '../lib/agent.js';
+import { buildAgentSystemPrompt } from '../lib/agent-tools.js';
+import { createBrowserExecutor } from './agent-browser.js';
+import { applyTheme, effectiveTheme, nextTheme, onSystemThemeChange } from '../lib/theme.js';
 import { approxTokens, buildMessages, formatPageContext } from '../lib/context.js';
 import { renderMarkdown, toPlainText } from '../lib/markdown.js';
 import { describeRestriction, isInjectable } from '../lib/pages.js';
@@ -43,57 +48,50 @@ const els = {
   bannerHint: $('banner-hint'),
   bannerAction: $('banner-action'),
   bannerClose: $('banner-close'),
+  agent: $('btn-agent'),
+  chat: $('btn-chat'),
+  theme: $('btn-theme'),
+  themeLabel: $('theme-label'),
 };
+
+/** 에이전트 모드의 빈 화면 예시 — 어떤 일을 시킬 수 있는지 보여 줍니다. */
+const AGENT_EXAMPLES = () =>
+  [
+    ['agentEx.search', 'search'],
+    ['agentEx.browse', 'compass'],
+    ['agentEx.read', 'scroll'],
+    ['agentEx.tabs', 'layers'],
+  ].map(([key, icon]) => ({
+    icon,
+    card: t(`${key}.card`),
+    desc: t(`${key}.desc`),
+    prompt: t(`${key}.prompt`),
+  }));
 
 /**
  * 빠른 질문.
  *   label  — 입력창 위 칩에 쓰는 짧은 이름
  *   card   — 빈 상태 카드에 쓰는 문구(무엇을 해 주는지 한눈에)
- *   emoji  — 카드 아이콘. onboarding 에서만 씁니다.
+ *   icon   — 카드 아이콘 이름(panel.css 의 .ico-<이름>)
+ *   desc   — 카드 아래 한 줄 설명
  * card 가 있는 항목만 빈 상태 카드로 보여 줍니다(6개 = 2열 × 3행).
  */
-const QUICK_PROMPTS = [
-  {
-    label: '요약',
-    emoji: '📌',
-    card: '3줄 핵심 요약',
-    prompt: '이 페이지의 핵심 내용을 5줄 이내로 요약해 주세요.',
-  },
-  {
-    label: '핵심 포인트',
-    emoji: '🔑',
-    card: '중요 포인트 뽑기',
-    prompt: '이 페이지에서 가장 중요한 포인트를 불릿으로 정리해 주세요.',
-  },
-  {
-    label: '표로 정리',
-    emoji: '📊',
-    card: '표로 한눈에 정리',
-    prompt: '이 페이지의 주요 정보를 표로 정리해 주세요.',
-  },
-  {
-    label: '쉽게 설명',
-    emoji: '🌐',
-    card: '쉬운 말로 풀기',
-    prompt: '이 페이지 내용을 비전문가도 이해할 수 있게 쉬운 말로 설명해 주세요.',
-  },
-  {
-    label: '용어 정리',
-    emoji: '🗂',
-    card: '나오는 용어 정리',
-    prompt: '이 페이지에 나오는 주요 용어를 뜻과 함께 정리해 주세요.',
-  },
-  {
-    label: '다음 행동',
-    emoji: '➡️',
-    card: '다음에 할 일 제안',
-    prompt: '이 페이지를 읽은 사람이 이어서 확인하거나 실행하면 좋을 일을 제안해 주세요.',
-  },
-  {
-    label: '한국어 번역',
-    prompt:
-      '이 페이지 본문을 자연스러운 한국어로 번역해 주세요. 분량이 많으면 핵심 단락부터 번역하고 그 사실을 알려 주세요.',
-  },
+const QUICK_PROMPTS = () => [
+  ...[
+    ['quick.summary', 'summary'],
+    ['quick.points', 'list'],
+    ['quick.table', 'table'],
+    ['quick.simple', 'bulb'],
+    ['quick.glossary', 'book'],
+    ['quick.next', 'arrow'],
+  ].map(([key, icon]) => ({
+    icon,
+    label: t(`${key}.label`),
+    card: t(`${key}.card`),
+    desc: t(`${key}.desc`),
+    prompt: t(`${key}.prompt`),
+  })),
+  { label: t('quick.translate.label'), prompt: t('quick.translate.prompt') },
 ];
 
 /* ---------------------------------------------------------------- 상태 */
@@ -129,6 +127,10 @@ const state = {
   picking: null,
   /** 탭별 본문 캐시: tabId -> { page, signature, at } */
   pageCache: new Map(),
+  /** 에이전트 승인 대기: turnId -> { label, reason, resolve } */
+  confirms: new Map(),
+  /** 사용자가 펼쳐 둔 에이전트 단계 목록(turnId) */
+  openSteps: new Set(),
 };
 
 
@@ -149,20 +151,12 @@ const scrollToBottom = () => {
 };
 
 const setStatus = (text, tooltip = '') => {
-  const queued = state.queuedPrompt ? ' · 대기 중인 요청 1건' : '';
+  const queued = state.queuedPrompt ? t('status.queued') : '';
   els.status.textContent = `${text ?? ''}${text ? queued : ''}`;
   els.status.title = tooltip;
 };
 
-const fmt = (n) => Number(n ?? 0).toLocaleString('ko-KR');
-
-/** 받침 유무에 따라 목적격 조사를 고릅니다('페이지를' / '영역을'). */
-const objectParticle = (word) => {
-  const last = String(word ?? '').trim().slice(-1);
-  const code = last.charCodeAt(0);
-  if (Number.isNaN(code) || code < 0xac00 || code > 0xd7a3) return '를';
-  return (code - 0xac00) % 28 === 0 ? '를' : '을';
-};
+const fmt = (n) => formatNumber(n);
 
 /** 근거 표시 관련 안내 — 응답 중에는 진행 상태를 덮지 않습니다. */
 const setCiteStatus = (text) => {
@@ -271,52 +265,53 @@ function renderContextBar(modeOverride) {
   };
 
   if (state.pendingTabId != null) {
-    setTop('loading', '다른 탭으로 이동했습니다', '응답이 끝나면 그 탭의 대화로 전환합니다');
-    setBadge('응답이 끝나면 새 탭으로 전환합니다');
+    setTop('loading', t('ctx.movedTitle'), t('ctx.movedTip'));
+    setBadge(t('ctx.movedBadge'));
     return;
   }
 
   if (mode === 'off') {
-    setTop('off', '페이지를 참조하지 않습니다', '일반 챗봇처럼 동작합니다');
-    setBadge('페이지 참조 안 함', '참조 범위를 바꾸면 현재 페이지를 함께 보냅니다', 'off');
+    setTop('off', t('ctx.offTitle'), t('ctx.offTip'));
+    setBadge(t('ctx.offBadge'), t('ctx.offBadgeTip'), 'off');
     return;
   }
 
   if (state.pageLoading) {
-    setTop('loading', '페이지를 읽는 중…');
-    setBadge('페이지를 읽는 중…');
+    setTop('loading', t('ctx.loading'));
+    setBadge(t('ctx.loading'));
     return;
   }
 
   if (state.pageError) {
-    setTop('warn', '페이지를 읽을 수 없습니다', state.pageError);
+    setTop('warn', t('ctx.errorTitle'), state.pageError);
     setBadge(state.pageError, state.pageError, 'off');
     return;
   }
 
   const page = state.page;
   if (!page) {
-    setTop('warn', '읽은 페이지가 없습니다', '⟳ 를 눌러 다시 시도하세요');
-    setBadge('참조할 내용이 없습니다', '⟳ 를 눌러 다시 읽어 보세요', 'off');
+    setTop('warn', t('ctx.noneTitle'), t('ctx.noneTip'));
+    setBadge(t('ctx.nothing'), t('ctx.noneBadgeTip'), 'off');
     return;
   }
 
   if (!page.text && !page.selection) {
     const why = page.hasFrames
-      ? '본문이 내부 프레임(iframe)에 있어 읽지 못했습니다'
+      ? t('ctx.whyFrames')
       : page.hasShadowRoots
-        ? '웹 컴포넌트(shadow DOM) 안에서도 글자를 찾지 못했습니다'
-        : 'PDF·이미지이거나 아직 로딩 중일 수 있습니다';
-    setTop('warn', page.title || '본문을 찾지 못했습니다', why);
-    setBadge('참조할 내용이 없습니다', why, 'off');
+        ? t('ctx.whyShadow')
+        : t('ctx.whyOther');
+    setTop('warn', page.title || t('ctx.noBody'), why);
+    setBadge(t('ctx.nothing'), why, 'off');
     return;
   }
 
   // 정상 — 제목은 위에, 분량·참조 범위는 입력창 아래 뱃지에.
-  const scopeName = mode === 'selection' && page.selection ? '선택 영역' : '전체 페이지';
+  const isSelection = mode === 'selection' && Boolean(page.selection);
+  const scopeName = t(isSelection ? 'ctx.scopeSelection' : 'ctx.scopePage');
   setTop(
     'ok',
-    page.title || page.url || '제목 없음',
+    page.title || page.url || t('ctx.untitled'),
     [page.title, page.url].filter(Boolean).join('\n'),
   );
 
@@ -329,15 +324,15 @@ function renderContextBar(modeOverride) {
   const shown =
     mode === 'selection' && page.selection ? page.selection.length : Math.min(page.charCount, state.settings.maxContextChars);
   const tip = [
-    `${scopeName}${objectParticle(scopeName)} 참조합니다`,
-    `본문 ${fmt(page.charCount)}자 중 ${fmt(shown)}자 전송`,
-    context ? `약 ${fmt(approxTokens(context))} 토큰` : '',
-    page.truncated || page.depthClipped ? '본문이 매우 길어 일부만 읽었습니다' : '',
+    t(isSelection ? 'ctx.tipSelection' : 'ctx.tipPage'),
+    t('ctx.tipSent', { total: fmt(page.charCount), shown: fmt(shown) }),
+    context ? t('ctx.tipTokens', { n: fmt(approxTokens(context)) }) : '',
+    page.truncated || page.depthClipped ? t('ctx.tipTruncated') : '',
   ]
     .filter(Boolean)
     .join(' · ');
 
-  setBadge(`${scopeName} 참조 중 · ${fmt(shown)}자`, tip);
+  setBadge(t('ctx.badge', { scope: scopeName, n: fmt(shown) }), tip);
 }
 
 /**
@@ -354,7 +349,7 @@ async function refreshContext(modeOverride, { force = false } = {}) {
     return;
   }
   if (state.tabId == null) {
-    state.pageError = '현재 탭을 확인할 수 없습니다.';
+    state.pageError = t('ctx.noTab');
     renderContextBar(modeOverride);
     return;
   }
@@ -445,8 +440,8 @@ async function refreshContext(modeOverride, { force = false } = {}) {
       const failure = (results ?? []).map((entry) => entry?.result).find((r) => r?.error);
       state.page = null;
       state.pageError = failure?.error
-        ? `본문 추출 실패: ${failure.error}`
-        : '본문을 추출하지 못했습니다.';
+        ? t('ctx.extractFailed', { error: failure.error })
+        : t('ctx.extractEmpty');
       return;
     }
 
@@ -462,7 +457,7 @@ async function refreshContext(modeOverride, { force = false } = {}) {
             depthClipped: richest.depthClipped,
             headings: richest.headings?.length ? richest.headings : base.headings,
             selection: base.selection || richest.selection,
-            source: `${richest.source} (내부 프레임)`,
+            source: t('ctx.innerFrame', { source: richest.source }),
           }
         : base;
 
@@ -491,7 +486,7 @@ async function refreshContext(modeOverride, { force = false } = {}) {
       message,
     )
       ? describeRestriction(state.tabUrl)
-      : `본문을 읽지 못했습니다: ${message}`;
+      : t('ctx.readFailed', { error: message });
   } finally {
     if (gen === state.ctxGen) {
       state.pageLoading = false;
@@ -562,7 +557,7 @@ async function runInsertInTab(options) {
   const results = await chrome.scripting.executeScript({
     target: { tabId: state.tabId, allFrames: true },
     func: runInsert,
-    args: [options],
+    args: [{ ...options, msgs: { tip: t('ins.tip'), tipHint: t('ins.tipHint') } }],
   });
   return (results ?? []).map((entry) => entry?.result).filter(Boolean);
 }
@@ -578,7 +573,7 @@ async function cancelPicking({ silent = false } = {}) {
   } catch {
     /* 탭이 닫혔거나 주입할 수 없는 페이지 */
   }
-  if (!silent && picking) setStatus('입력을 취소했습니다.');
+  if (!silent && picking) setStatus(t('insert.cancelled'));
 }
 
 /**
@@ -589,19 +584,19 @@ async function cancelPicking({ silent = false } = {}) {
  */
 async function insertIntoPage(turn, button) {
   if (state.tabId == null) {
-    setStatus('현재 탭을 확인할 수 없습니다.');
+    setStatus(t('ctx.noTab'));
     return;
   }
   const url = await currentTabUrl();
   if (!isInjectable(url)) {
-    showBanner({ title: '이 페이지에는 입력할 수 없습니다.', hint: describeRestriction(url) });
+    showBanner({ title: t('insert.cantTitle'), hint: describeRestriction(url) });
     return;
   }
 
   // 마크다운 기호가 폼에 그대로 들어가지 않도록 평문으로 바꿉니다.
   const text = toPlainText(turn.content);
   if (!text.trim()) {
-    setStatus('넣을 내용이 없습니다.');
+    setStatus(t('insert.empty'));
     return;
   }
 
@@ -612,24 +607,24 @@ async function insertIntoPage(turn, button) {
   try {
     outcomes = await runInsertInTab({ mode: 'auto', text });
   } catch (error) {
-    showBanner({ title: '입력 위치를 찾지 못했습니다.', hint: String(error?.message ?? error) });
+    showBanner({ title: t('insert.notFoundTitle'), hint: String(error?.message ?? error) });
     return;
   }
 
   if (outcomes.some((outcome) => outcome.status === 'inserted')) {
-    setStatus('입력 완료');
+    setStatus(t('insert.done'));
     return;
   }
 
   if (outcomes.length > 0 && outcomes.every((outcome) => outcome.status === 'noTargets')) {
     showBanner({
-      title: '이 페이지는 자동 입력을 지원하지 않습니다.',
-      hint: '입력할 수 있는 칸을 찾지 못했습니다(구글 문서·피그마처럼 화면을 직접 그리는 편집기). 답변을 복사해 붙여 넣어 주세요.',
+      title: t('insert.unsupportedTitle'),
+      hint: t('insert.unsupportedHint'),
       action: {
-        label: '답변 복사',
+        label: t('insert.copyAnswer'),
         run: async () => {
           const ok = await copyText(turn.content);
-          setStatus(ok ? '답변을 복사했습니다.' : '복사하지 못했습니다.');
+          setStatus(t(ok ? 'insert.copied' : 'insert.copyFailed'));
           if (ok) hideBanner();
         },
       },
@@ -642,17 +637,17 @@ async function insertIntoPage(turn, button) {
   try {
     const started = await runInsertInTab({ mode: 'pick', text });
     if (!started.some((outcome) => outcome.status === 'picking')) {
-      setStatus('입력할 위치를 찾지 못했습니다.');
+      setStatus(t('insert.noSpot'));
       return;
     }
   } catch (error) {
-    setStatus(`입력 위치 선택을 시작하지 못했습니다: ${String(error?.message ?? error)}`);
+    setStatus(t('insert.pickFailed', { error: String(error?.message ?? error) }));
     return;
   }
 
   state.picking = { button, label };
-  if (button) button.textContent = '선택 중…';
-  setStatus('웹페이지에서 입력할 위치를 선택하세요 (취소: ESC)');
+  if (button) button.textContent = t('insert.picking');
+  setStatus(t('insert.pickPrompt'));
 }
 
 /** 컨텐츠 스크립트가 보내는 선택 결과. */
@@ -661,9 +656,9 @@ function onInsertResult(message) {
   state.picking = null;
   if (picking?.button) picking.button.textContent = picking.label;
 
-  if (message.status === 'inserted') setStatus('입력 완료');
-  else if (message.status === 'cancelled') setStatus('입력을 취소했습니다.');
-  else setStatus('입력하지 못했습니다. 다른 입력창을 골라 보세요.');
+  if (message.status === 'inserted') setStatus(t('insert.done'));
+  else if (message.status === 'cancelled') setStatus(t('insert.cancelled'));
+  else setStatus(t('insert.failed'));
 
   // 다른 프레임에 남아 있는 오버레이를 정리합니다.
   if (state.tabId != null) runInsertInTab({ mode: 'cancel' }).catch(() => {});
@@ -677,7 +672,7 @@ function onInsertResult(message) {
  */
 async function showCitation(quote, chip) {
   if (state.tabId == null) {
-    setCiteStatus('현재 탭을 확인할 수 없습니다.');
+    setCiteStatus(t('ctx.noTab'));
     return;
   }
 
@@ -716,24 +711,24 @@ async function showCitation(quote, chip) {
 
     if (found > 0) {
       const notes = [];
-      if (partial > 0) notes.push('문장 앞부분만 일치해 그 부분만 표시했습니다');
-      if (!styled) notes.push('색을 적용하지 못해 위치로만 이동했습니다');
-      setCiteStatus(notes.length ? `근거 표시 — ${notes.join(' · ')}` : '페이지에서 근거를 표시했습니다.');
+      if (partial > 0) notes.push(t('cite.partialNote'));
+      if (!styled) notes.push(t('cite.unstyledNote'));
+      setCiteStatus(notes.length ? t('cite.shownWith', { notes: notes.join(' · ') }) : t('cite.shown'));
       if (chip) {
         chip.dataset.state = partial > 0 ? 'partial' : 'found';
-        chip.textContent = partial > 0 ? '일부 표시' : '표시됨';
+        chip.textContent = t(partial > 0 ? 'cite.chipPartial' : 'cite.chipShown');
         if (chip.dataset.timer) clearTimeout(Number(chip.dataset.timer));
         chip.dataset.timer = String(setTimeout(restore, 1400));
       }
     } else if (!supported) {
-      setCiteStatus('이 브라우저는 하이라이트 기능을 지원하지 않습니다.');
+      setCiteStatus(t('cite.unsupported'));
     } else if (truncated) {
-      setCiteStatus('문서가 매우 길어 앞부분에서만 찾았습니다. 해당 위치를 찾지 못했습니다.');
+      setCiteStatus(t('cite.tooLong'));
     } else {
-      setCiteStatus('페이지에서 그 문장을 찾지 못했습니다(내용이 바뀐 것 같습니다).');
+      setCiteStatus(t('cite.notFound'));
     }
   } catch (error) {
-    setCiteStatus(`근거 표시 실패: ${String(error?.message ?? error)}`);
+    setCiteStatus(t('cite.failed', { error: String(error?.message ?? error) }));
   }
 }
 
@@ -764,8 +759,8 @@ function renderCitations(turn, bubble) {
   // 처음 보는 사용자가 단순 태그로 오해하지 않도록, 무엇을 하는 버튼인지 밝힙니다.
   const caption = document.createElement('span');
   caption.className = 'cites-label';
-  caption.title = '칩을 누르면 페이지에서 그 문장을 찾아 표시하고 그 위치로 이동합니다.';
-  caption.textContent = '근거 — 누르면 본문 위치로 이동';
+  caption.title = t('cite.captionTip');
+  caption.textContent = t('cite.caption');
   box.append(caption);
 
   for (const quote of quotes) {
@@ -773,11 +768,11 @@ function renderCitations(turn, bubble) {
     chip.type = 'button';
     chip.className = 'cite-chip';
     chip.title = quote.exact
-      ? `페이지에서 찾아 표시: ${quote.text}`
-      : `원문과 완전히 같지 않아 앞부분만 확인됨: ${quote.text}`;
+      ? t('cite.chipTip', { text: quote.text })
+      : t('cite.chipTipPartial', { text: quote.text });
     const label = quote.text.length > 26 ? `${quote.text.slice(0, 26)}…` : quote.text;
-    // 📍 는 '위치로 이동' 을 연상시키는 단서입니다(태그가 아니라 버튼임을 알림).
-    chip.textContent = quote.exact ? `📍 ${label}` : `📍 ${label} (일부)`;
+    // 앞의 위치 아이콘(CSS)은 '위치로 이동' 을 알리는 단서입니다(태그가 아니라 버튼임을 알림).
+    chip.textContent = quote.exact ? label : t('cite.partialSuffix', { label });
     // 클릭 피드백 후 되돌릴 이름을 DOM 이 아닌 dataset 에 보관합니다.
     chip.dataset.label = chip.textContent;
     if (!quote.exact) chip.dataset.exact = 'false';
@@ -788,7 +783,7 @@ function renderCitations(turn, bubble) {
   const clear = document.createElement('button');
   clear.type = 'button';
   clear.className = 'cite-chip is-clear';
-  clear.textContent = '표시 지우기';
+  clear.textContent = t('cite.clear');
   clear.dataset.label = clear.textContent;
   clear.addEventListener('click', () => clearCitations());
   box.append(clear);
@@ -798,7 +793,7 @@ function renderCitations(turn, bubble) {
 
 /* -------------------------------------------------------------- 렌더링 */
 
-const ROLE_LABEL = { user: '나', assistant: 'AI' };
+const roleLabel = (role) => (role === 'user' || role === 'assistant' ? t(`role.${role}`) : role);
 
 function buildMessageNode(turn) {
   const wrap = document.createElement('article');
@@ -809,7 +804,7 @@ function buildMessageNode(turn) {
   // 누가 한 말인지 알려야 하므로 보이지 않는 라벨을 남깁니다.
   const role = document.createElement('span');
   role.className = 'sr-only';
-  role.textContent = ROLE_LABEL[turn.role] ?? turn.role;
+  role.textContent = roleLabel(turn.role);
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
@@ -832,34 +827,37 @@ function applyState(turn, node) {
 function fillActions(turn, actions) {
   actions.replaceChildren();
   const text = String(turn.content ?? '').trim();
-  if (turn.role !== 'assistant' || !text) {
+  // 에이전트 답은 요약 없이 중지돼도 '다시 생성' 을 쓸 수 있어야 합니다.
+  const isAgent = turn.kind === 'agent' && turn.status !== 'streaming';
+  if (turn.role !== 'assistant' || (!text && !isAgent)) {
     actions.hidden = true;
     return;
   }
   actions.hidden = false;
 
   // 이 확장 프로그램의 핵심 액션이므로 가장 먼저, 눈에 띄게 둡니다.
-  if (turn.status !== 'error') {
+  if (turn.status !== 'error' && turn.kind !== 'agent') {
     const insert = document.createElement('button');
     insert.type = 'button';
     insert.className = 'msg-action is-primary';
-    insert.textContent = '본문 입력';
-    insert.dataset.label = '본문 입력';
+    insert.textContent = t('action.insert');
+    insert.dataset.label = t('action.insert');
     insert.title =
-      '웹페이지의 입력창에 이 답변을 넣습니다. 커서가 있는 칸이 있으면 바로, 없으면 페이지에서 위치를 고릅니다.';
+      t('action.insertTip');
     insert.addEventListener('click', () => insertIntoPage(turn, insert));
     actions.append(insert);
   }
 
   const copy = document.createElement('button');
+  copy.hidden = !text;
   copy.type = 'button';
   copy.className = 'msg-action';
-  copy.textContent = '복사';
+  copy.textContent = t('action.copy');
   copy.addEventListener('click', async () => {
     const ok = await copyText(turn.content ?? '');
-    copy.textContent = ok ? '복사됨' : '실패';
+    copy.textContent = t(ok ? 'action.copied' : 'action.failed');
     setTimeout(() => {
-      copy.textContent = '복사';
+      copy.textContent = t('action.copy');
     }, 1200);
   });
   actions.append(copy);
@@ -869,7 +867,7 @@ function fillActions(turn, actions) {
     const again = document.createElement('button');
     again.type = 'button';
     again.className = 'msg-action';
-    again.textContent = '다시 생성';
+    again.textContent = t('action.regenerate');
     again.addEventListener('click', () => regenerate());
     actions.append(again);
   }
@@ -880,11 +878,15 @@ function paintBubble(turn, bubble) {
     bubble.textContent = turn.content;
     return;
   }
+  if (turn.kind === 'agent') {
+    paintAgentBubble(turn, bubble);
+    return;
+  }
 
   if (turn.status === 'error') {
     bubble.replaceChildren();
     const title = document.createElement('strong');
-    title.textContent = turn.error?.title ?? '오류가 발생했습니다.';
+    title.textContent = turn.error?.title ?? t('msg.errorDefault');
     bubble.append(title);
     if (turn.error?.hint) {
       const hint = document.createElement('p');
@@ -910,7 +912,7 @@ function paintBubble(turn, bubble) {
   if (turn.status === 'stopped') {
     const note = document.createElement('p');
     note.style.cssText = 'margin:6px 0 0;font-size:11px;opacity:.7';
-    note.textContent = '(중지됨)';
+    note.textContent = t('msg.stopped');
     bubble.append(note);
   }
   enhanceCodeBlocks(bubble);
@@ -923,50 +925,226 @@ function enhanceCodeBlocks(bubble) {
     pre.dataset.enhanced = '1';
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = '복사';
+    button.textContent = t('action.copy');
     button.style.cssText =
       'position:absolute;top:5px;right:5px;padding:1px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg-muted);font-size:10.5px;cursor:pointer';
     button.addEventListener('click', async () => {
       const ok = await copyText(pre.querySelector('code')?.textContent ?? '');
-      button.textContent = ok ? '복사됨' : '실패';
+      button.textContent = t(ok ? 'action.copied' : 'action.failed');
       setTimeout(() => {
-        button.textContent = '복사';
+        button.textContent = t('action.copy');
       }, 1200);
     });
     pre.append(button);
   }
 }
 
+/* ------------------------------------------------------- 에이전트 표시 */
+
+const STEP_STATUSES = new Set(['running', 'done', 'error', 'denied', 'confirm']);
+
+function renderAgentSteps(turn) {
+  const steps = turn.steps ?? [];
+  const details = document.createElement('details');
+  details.className = 'agent-steps';
+  details.open = turn.status === 'streaming' || state.openSteps.has(turn.id) || steps.length <= 3;
+  details.addEventListener('toggle', () => {
+    if (details.open) state.openSteps.add(turn.id);
+    else state.openSteps.delete(turn.id);
+  });
+
+  const summary = document.createElement('summary');
+  const failed = steps.filter((step) => step.status === 'error').length;
+  summary.textContent =
+    steps.length === 0
+      ? t('steps.reading')
+      : `${t('steps.count', { n: steps.length })}${failed ? t('steps.failed', { n: failed }) : ''}`;
+  details.append(summary);
+
+  const list = document.createElement('ol');
+  for (const step of steps) {
+    const item = document.createElement('li');
+    item.className = `agent-step is-${step.status}`;
+    const icon = document.createElement('span');
+    // 상태 표시는 CSS 가 그립니다(진행 중 = 회전 링, 완료 = 체크 등).
+    icon.className = 'agent-step-icon';
+    icon.title = STEP_STATUSES.has(step.status) ? t(`step.${step.status}`) : '';
+    const label = document.createElement('span');
+    label.className = 'agent-step-label';
+    label.textContent = step.label;
+    item.append(icon, label);
+    if (step.result && step.status !== 'running') {
+      const result = document.createElement('span');
+      result.className = 'agent-step-result';
+      result.textContent = step.result;
+      item.append(result);
+    }
+    list.append(item);
+  }
+  details.append(list);
+  return details;
+}
+
+function renderConfirmCard(turn, pending) {
+  const card = document.createElement('div');
+  card.className = 'agent-confirm';
+  card.setAttribute('role', 'group');
+  card.setAttribute('aria-label', t('confirm.aria'));
+
+  const title = document.createElement('strong');
+  title.textContent = t('confirm.title');
+  const what = document.createElement('p');
+  what.className = 'agent-confirm-what';
+  what.textContent = pending.label;
+  card.append(title, what);
+  if (pending.reason) {
+    const why = document.createElement('p');
+    why.className = 'agent-confirm-why';
+    why.textContent = pending.reason;
+    card.append(why);
+  }
+
+  const buttons = document.createElement('div');
+  buttons.className = 'agent-confirm-actions';
+  const allow = document.createElement('button');
+  allow.type = 'button';
+  allow.className = 'msg-action is-primary';
+  allow.textContent = t('confirm.allow');
+  allow.addEventListener('click', () => answerConfirm(turn, true));
+  const deny = document.createElement('button');
+  deny.type = 'button';
+  deny.className = 'msg-action';
+  deny.textContent = t('confirm.deny');
+  deny.addEventListener('click', () => answerConfirm(turn, false));
+  buttons.append(allow, deny);
+  card.append(buttons);
+  return card;
+}
+
+function paintAgentBubble(turn, bubble) {
+  // 다시 그리는 동안 승인 버튼의 포커스를 잃지 않게 기억해 둡니다.
+  const focusedConfirm = bubble.contains(document.activeElement)
+    ? document.activeElement?.textContent
+    : null;
+  bubble.replaceChildren();
+  bubble.append(renderAgentSteps(turn));
+
+  const pending = state.confirms.get(turn.id);
+  if (pending) {
+    const card = renderConfirmCard(turn, pending);
+    bubble.append(card);
+    const again = Array.from(card.querySelectorAll('button')).find((b) => b.textContent === focusedConfirm);
+    // 기본 포커스는 '거부' — 무심코 누른 Enter 가 위험한 동작을 승인하지 않게 합니다.
+    (again ?? card.querySelector('.agent-confirm-actions button:last-child'))?.focus({ preventScroll: true });
+  }
+
+  if (turn.status === 'error') {
+    const title = document.createElement('strong');
+    title.textContent = turn.error?.title ?? t('msg.errorDefault');
+    bubble.append(title);
+    if (turn.error?.hint) {
+      const hint = document.createElement('p');
+      hint.style.margin = '4px 0 0';
+      hint.textContent = turn.error.hint;
+      bubble.append(hint);
+    }
+    return;
+  }
+
+  if (turn.content) {
+    const body = document.createElement('div');
+    body.className = 'agent-answer';
+    body.innerHTML = renderMarkdown(turn.content);
+    bubble.append(body);
+    enhanceCodeBlocks(body);
+  }
+  if (turn.status === 'streaming' && !pending) {
+    const dot = document.createElement('span');
+    dot.className = 'typing';
+    bubble.append(dot);
+  }
+  if (turn.status === 'stopped') {
+    const note = document.createElement('p');
+    note.style.cssText = 'margin:6px 0 0;font-size:11px;opacity:.7';
+    note.textContent = t('msg.stopped');
+    bubble.append(note);
+  }
+}
+
+function answerConfirm(turn, allowed) {
+  const pending = state.confirms.get(turn.id);
+  if (!pending) return;
+  state.confirms.delete(turn.id);
+  pending.resolve(allowed);
+  updateTurn(turn);
+}
+
+/** 승인 카드를 띄우고 사용자의 답(또는 중지)을 기다립니다. */
+function askConfirm(turn, request, signal) {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve(false);
+      return;
+    }
+    const done = (value) => {
+      signal.removeEventListener('abort', onAbort);
+      resolve(value);
+    };
+    const onAbort = () => {
+      state.confirms.delete(turn.id);
+      done(false);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    state.confirms.set(turn.id, { label: request.label, reason: request.reason, resolve: done });
+    updateTurn(turn);
+    scrollToBottom();
+    setStatus(t('confirm.waiting'));
+  });
+}
+
 function renderWelcome() {
   const box = document.createElement('div');
   box.className = 'welcome';
 
+  const agentMode = Boolean(state.settings?.agentMode);
   const heading = document.createElement('h2');
-  heading.textContent = '이 페이지를 함께 읽습니다';
+  heading.textContent = t(agentMode ? 'welcome.agentTitle' : 'welcome.chatTitle');
   const lead = document.createElement('p');
-  lead.textContent = '아래를 눌러 바로 시작하거나, 직접 질문을 입력하세요.';
+  lead.textContent = t(agentMode ? 'welcome.agentLead' : 'welcome.chatLead');
   box.append(heading, lead);
 
   // 타이핑 없이 첫 질문을 던질 수 있게 카드로 배치합니다.
   const cards = document.createElement('div');
   cards.className = 'welcome-cards';
-  for (const item of QUICK_PROMPTS.filter((entry) => entry.card)) {
+  const items = agentMode ? AGENT_EXAMPLES() : QUICK_PROMPTS().filter((entry) => entry.card);
+  for (const item of items) {
     const card = document.createElement('button');
     card.type = 'button';
     card.className = 'welcome-card';
     card.title = item.prompt;
     card.disabled = state.busy;
 
-    const emoji = document.createElement('span');
-    emoji.className = 'emoji';
-    emoji.textContent = item.emoji ?? '💬';
-    emoji.setAttribute('aria-hidden', 'true');
+    const icon = document.createElement('span');
+    icon.className = 'ico-wrap';
+    icon.setAttribute('aria-hidden', 'true');
+    const glyph = document.createElement('span');
+    glyph.className = `ico ico-${item.icon ?? 'chat'}`;
+    icon.append(glyph);
 
+    const text = document.createElement('span');
+    text.className = 'text';
     const label = document.createElement('span');
     label.className = 'label';
     label.textContent = item.card;
+    text.append(label);
+    if (item.desc) {
+      const desc = document.createElement('span');
+      desc.className = 'desc';
+      desc.textContent = item.desc;
+      text.append(desc);
+    }
 
-    card.append(emoji, label);
+    card.append(icon, text);
     card.addEventListener('click', () => send(item.prompt));
     cards.append(card);
   }
@@ -974,8 +1152,7 @@ function renderWelcome() {
 
   const note = document.createElement('p');
   note.className = 'welcome-note';
-  note.textContent =
-    '페이지에서 원하는 부분을 선택한 뒤 위쪽 참조 범위를 “선택 영역”으로 바꾸면 그 부분만 봅니다.';
+  note.textContent = t(agentMode ? 'welcome.agentNote' : 'welcome.chatNote');
   box.append(note);
 
   els.messages.replaceChildren(box);
@@ -1083,9 +1260,13 @@ function setBusy(busy) {
  * @param {{contextMode?: string, selectionText?: string, fromInput?: boolean}} [options]
  *   fromInput: 입력창에서 보낸 경우에만 입력창을 비웁니다(작성 중인 초안 보호).
  */
-async function send(text, { contextMode, selectionText, fromInput = false } = {}) {
+async function send(text, { contextMode, selectionText, fromInput = false, agent } = {}) {
   const question = String(text ?? '').trim();
   if (!question || state.busy) return;
+  if (agent ?? state.settings.agentMode) {
+    await sendAgent(question, { fromInput });
+    return;
+  }
 
   hideBanner();
   const history = state.turns
@@ -1124,7 +1305,7 @@ async function send(text, { contextMode, selectionText, fromInput = false } = {}
   const controller = new AbortController();
   state.controller = controller;
   setBusy(true);
-  setStatus('응답을 기다리는 중…');
+  setStatus(t('send.waiting'));
 
   const effective = contextMode ? { ...state.settings, contextMode } : state.settings;
 
@@ -1156,7 +1337,7 @@ async function send(text, { contextMode, selectionText, fromInput = false } = {}
       onDelta: (delta) => {
         if (!firstChunkAt) {
           firstChunkAt = Date.now();
-          setStatus('응답 중…');
+          setStatus(t('send.streaming'));
         }
         answer.content += delta;
         painter.tick();
@@ -1166,7 +1347,7 @@ async function send(text, { contextMode, selectionText, fromInput = false } = {}
     answer.status = 'done';
     answer.content = result.text || answer.content;
     if (!answer.content.trim()) {
-      answer.content = '_(모델이 빈 응답을 반환했습니다. 다시 시도해 보세요.)_';
+      answer.content = t('send.empty');
     }
     answer.ms = Date.now() - started;
     // 답변에서 인용한 문장 중 실제로 페이지 내용에 있는 것만 근거로 남깁니다.
@@ -1181,8 +1362,8 @@ async function send(text, { contextMode, selectionText, fromInput = false } = {}
     const seconds = (answer.ms / 1000).toFixed(1);
     const usage = result.usage;
     setStatus(
-      `완료 · ${seconds}초`,
-      usage?.total_tokens ? `사용 토큰 ${fmt(usage.total_tokens)}` : '',
+      t('send.done', { s: seconds }),
+      usage?.total_tokens ? t('send.tokens', { n: fmt(usage.total_tokens) }) : '',
     );
   } catch (error) {
     const described = describeError(error, {
@@ -1191,8 +1372,8 @@ async function send(text, { contextMode, selectionText, fromInput = false } = {}
     });
     if (described.kind === 'aborted') {
       answer.status = answer.content ? 'stopped' : 'error';
-      if (!answer.content) answer.error = { title: '요청을 중지했습니다.', hint: '' };
-      setStatus('중지됨');
+      if (!answer.content) answer.error = { title: t('send.stoppedTitle'), hint: '' };
+      setStatus(t('send.stopped'));
     } else {
       answer.status = 'error';
       answer.error = described;
@@ -1202,8 +1383,8 @@ async function send(text, { contextMode, selectionText, fromInput = false } = {}
         hint: described.hint,
         action:
           described.kind === 'auth' || described.kind === 'config' || described.kind === 'notfound'
-            ? { label: '설정 열기', run: openOptions }
-            : { label: '다시 시도', run: () => regenerate() },
+            ? { label: t('banner.openSettings'), run: openOptions }
+            : { label: t('banner.retry'), run: () => regenerate() },
       });
       console.warn('[page-chatbot]', error);
     }
@@ -1213,22 +1394,177 @@ async function send(text, { contextMode, selectionText, fromInput = false } = {}
     painter.flush();
     await persistConversation();
 
-    // 응답 중에 쌓인 일들을 순서대로 처리합니다.
-    const queued = state.queuedPrompt;
-    state.queuedPrompt = null;
-    const nextTab = state.pendingTabId;
-    state.pendingTabId = null;
+    await drainAfterRun();
+  }
+}
 
-    if (nextTab != null && nextTab !== state.tabId) {
-      await switchTab(nextTab);
-    } else if (queued?.prompt) {
-      send(queued.prompt, {
-        contextMode: queued.intent === 'selection' ? 'selection' : undefined,
-        selectionText: queued.selectionText,
-      });
-    } else {
-      renderContextBar();
+/** 응답 중에 쌓인 일(탭 이동, 우클릭 요청)을 순서대로 처리합니다. */
+async function drainAfterRun({ refresh = false } = {}) {
+  const queued = state.queuedPrompt;
+  state.queuedPrompt = null;
+  const nextTab = state.pendingTabId;
+  state.pendingTabId = null;
+
+  if (nextTab != null && nextTab !== state.tabId) {
+    await switchTab(nextTab);
+  } else if (queued?.prompt) {
+    send(queued.prompt, {
+      contextMode: queued.intent === 'selection' ? 'selection' : undefined,
+      selectionText: queued.selectionText,
+      agent: false,
+    });
+  } else if (refresh) {
+    await refreshContext(undefined, { force: true });
+  } else {
+    renderContextBar();
+  }
+}
+
+/**
+ * 에이전트 모드: 모델이 도구를 호출해 브라우저를 직접 조작합니다.
+ * 대화에는 사용자 지시와 최종 보고만 남기고, 중간 동작은 단계 목록으로 보여 줍니다.
+ */
+async function sendAgent(question, { fromInput = false } = {}) {
+  hideBanner();
+  if (state.tabId == null) {
+    setStatus(t('ctx.noTab'));
+    return;
+  }
+
+  const limit = state.settings.historyTurns;
+  const history =
+    limit > 0
+      ? state.turns
+          .filter((turn) => turn.status !== 'error' && String(turn.content ?? '').trim())
+          .slice(-limit)
+          .map((turn) => ({ role: turn.role, content: turn.content }))
+      : [];
+
+  appendTurn({ id: nextId(), role: 'user', content: question, status: 'done', at: Date.now(), agent: true });
+  if (fromInput) {
+    els.input.value = '';
+    autoGrow();
+  }
+  const answer = {
+    id: nextId(),
+    role: 'assistant',
+    kind: 'agent',
+    content: '',
+    steps: [],
+    status: 'streaming',
+    at: Date.now(),
+  };
+  appendTurn(answer);
+  await persistConversation();
+
+  const settings = state.settings;
+  const controller = new AbortController();
+  state.controller = controller;
+  setBusy(true);
+  setStatus(t('agent.reading'));
+
+  const painter = createThrottledPainter(answer);
+  const startTab = state.tabId;
+  const executor = createBrowserExecutor({ tabId: state.tabId, windowId: state.windowId });
+  const started = Date.now();
+  const total = settings.agentMaxSteps;
+
+  try {
+    const result = await runAgent({
+      task: question,
+      history,
+      systemPrompt: buildAgentSystemPrompt({ maxSteps: total }),
+      callModel: (messages, { tools, signal }) => {
+        const done = answer.steps.length;
+        setStatus(done === 0 ? t('agent.planning') : t('agent.deciding', { done, total }));
+        return chatWithTools({ settings, messages, tools, signal });
+      },
+      executor,
+      confirm: (request) => askConfirm(answer, request, controller.signal),
+      onStep: (step, steps) => {
+        answer.steps = steps.map(({ id, name, label, status, result, reason }) => ({
+          id,
+          name,
+          label,
+          status,
+          result,
+          reason,
+        }));
+        if (step.status === 'running') setStatus(`${steps.length}/${total} · ${step.label}`);
+        painter.tick();
+      },
+      signal: controller.signal,
+      maxSteps: total,
+      confirmMode: settings.agentConfirm,
+    });
+
+    answer.status = 'done';
+    answer.content =
+      result.text ||
+      (result.steps.length > 0
+        ? t('agent.noSummary')
+        : t('send.empty'));
+    if (result.outcome === 'max_steps') {
+      answer.content += `\n\n${t('agent.maxSteps', { n: total })}`;
     }
+    answer.ms = Date.now() - started;
+    const seconds = (answer.ms / 1000).toFixed(1);
+    setStatus(
+      t('agent.done', { n: result.steps.length, s: seconds }),
+      result.usage?.total_tokens ? t('send.tokens', { n: fmt(result.usage.total_tokens) }) : '',
+    );
+  } catch (error) {
+    if (controller.signal.aborted) {
+      // 진행 중이던(또는 승인을 기다리던) 단계는 실행되지 않았음을 표시합니다.
+      answer.steps = answer.steps.map((step) =>
+        step.status === 'running' || step.status === 'confirm'
+          ? { ...step, status: 'denied', result: t('agent.stepStopped') }
+          : step,
+      );
+      answer.status = answer.steps.length > 0 || answer.content ? 'stopped' : 'error';
+      if (answer.status === 'error') answer.error = { title: t('send.stoppedTitle'), hint: '' };
+      setStatus(t('send.stopped'));
+    } else {
+      const described = describeError(error, { baseUrl: settings.baseUrl, model: settings.model });
+      if (described.kind === 'badrequest') {
+        described.hint =
+          t('agent.toolHint', { model: settings.model }) +
+          (described.hint ?? '');
+      }
+      answer.status = 'error';
+      answer.error = described;
+      setStatus('');
+      showBanner({
+        title: described.title,
+        hint: described.hint,
+        action:
+          described.kind === 'auth' || described.kind === 'config' || described.kind === 'notfound'
+            ? { label: t('banner.openSettings'), run: openOptions }
+            : { label: t('banner.retry'), run: () => regenerate() },
+      });
+      console.warn('[page-chatbot] agent', error);
+    }
+  } finally {
+    state.confirms.delete(answer.id);
+    state.controller = null;
+    setBusy(false);
+    painter.flush();
+    executor.cleanup();
+
+    // 에이전트가 다른 탭으로 옮겨 갔다면 대화도 그 탭으로 가져갑니다.
+    // (사용자가 직접 다른 탭을 고른 경우는 그대로 그 탭으로 따라갑니다.)
+    const endTab = executor.tabId;
+    const moved = endTab !== startTab;
+    if (moved) {
+      await persistConversation(startTab, state.turns, state.tabUrl);
+      state.tabId = endTab;
+      state.tabUrl = '';
+      state.page = null;
+      state.pageError = '';
+      if (state.pendingTabId === endTab) state.pendingTabId = null;
+    }
+    await persistConversation();
+    await drainAfterRun({ refresh: true });
   }
 }
 
@@ -1241,7 +1577,7 @@ function regenerate() {
   const index = state.turns.lastIndexOf(lastUser);
   state.turns = state.turns.slice(0, index);
   renderAll();
-  send(lastUser.content, { contextMode: lastUser.contextMode });
+  send(lastUser.content, lastUser.agent ? { agent: true } : { contextMode: lastUser.contextMode, agent: false });
 }
 
 async function newChat() {
@@ -1284,7 +1620,7 @@ async function refreshModels() {
     els.model.value = current;
   };
 
-  paint([], '불러오는 중…');
+  paint([], t('models.loading'));
   // 앞선 요청이 늦게 도착해 최신 목록을 덮어쓰지 않도록 취소합니다.
   state.modelsController?.abort();
   const controller = new AbortController();
@@ -1296,16 +1632,16 @@ async function refreshModels() {
       signal: controller.signal,
     });
     if (controller.signal.aborted) return;
-    paint(ids, ids.length ? '' : '(서버에 등록된 모델 없음)');
+    paint(ids, ids.length ? '' : t('models.none'));
   } catch (error) {
     const described = describeError(error, { baseUrl: state.settings.baseUrl });
     if (described.kind === 'aborted') return; // 새 요청이 시작된 경우
-    paint([], '(목록 불러오기 실패)');
+    paint([], t('models.failed'));
     if (described.kind === 'network') {
       showBanner({
         title: described.title,
         hint: described.hint,
-        action: { label: '설정 열기', run: openOptions },
+        action: { label: t('banner.openSettings'), run: openOptions },
       });
     }
   }
@@ -1315,12 +1651,14 @@ async function refreshModels() {
 
 function autoGrow() {
   els.input.style.height = 'auto';
-  els.input.style.height = `${Math.min(els.input.scrollHeight, 160)}px`;
+  // box-sizing: border-box 이므로 테두리 두께를 더해야 스크롤바 없이 딱 맞습니다.
+  const border = els.input.offsetHeight - els.input.clientHeight;
+  els.input.style.height = `${Math.min(els.input.scrollHeight + border, 160)}px`;
 }
 
 function renderQuick() {
   els.quick.replaceChildren();
-  for (const item of QUICK_PROMPTS) {
+  for (const item of QUICK_PROMPTS()) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = item.label;
@@ -1343,9 +1681,7 @@ function updateQuickVisibility() {
   // 대화 시작 후: 기본 접힘 — 토글로 펼칩니다.
   els.quick.hidden = !hasConversation || !state.quickOpen;
   els.quickToggle.setAttribute('aria-expanded', String(Boolean(state.quickOpen)));
-  els.quickToggle.title = state.quickOpen ? '빠른 질문 접기' : '빠른 질문 펼치기';
-  const arrow = els.quickToggle.querySelector('span[aria-hidden]');
-  if (arrow) arrow.textContent = state.quickOpen ? '▴' : '▾';
+  els.quickToggle.title = t(state.quickOpen ? 'quick.collapse' : 'quick.expand');
   if (!els.quick.hidden) updateQuickFade();
 }
 
@@ -1376,13 +1712,14 @@ async function consumePending() {
   // 응답 중이면 버리지 않고 기억해 두었다가 끝난 뒤 실행합니다.
   if (state.busy) {
     state.queuedPrompt = payload;
-    setStatus('응답 중…');
+    setStatus(t('send.streaming'));
     return;
   }
 
   send(payload.prompt, {
     contextMode: payload.intent === 'selection' ? 'selection' : undefined,
     selectionText: payload.selectionText,
+    agent: false, // 우클릭 메뉴는 읽기 요청이므로 에이전트 모드여도 대답으로 처리합니다.
   });
 }
 
@@ -1418,6 +1755,31 @@ async function switchTab(tabId) {
   await refreshContext();
   if (gen !== state.switchGen) return;
   await consumePending();
+}
+
+/** 테마를 적용하고, 버튼은 '누르면 바뀔 테마' 의 아이콘(라이트면 달, 다크면 해)을 보여 줍니다. */
+function renderTheme() {
+  const theme = state.settings?.theme ?? 'system';
+  applyTheme(theme);
+  const dark = effectiveTheme(theme) === 'dark';
+  const icon = els.theme.querySelector('.ico');
+  icon.className = `ico ${dark ? 'ico-sun' : 'ico-moon'}`;
+  const label = t(dark ? 'theme.toLight' : 'theme.toDark');
+  els.theme.title = label;
+  els.themeLabel.textContent = label;
+  els.theme.setAttribute('aria-pressed', String(dark));
+}
+
+/** 에이전트 모드 여부에 맞춰 토글·입력창 안내·빈 화면을 바꿉니다. */
+function applyAgentUi() {
+  const on = Boolean(state.settings?.agentMode);
+  els.agent.setAttribute('aria-checked', String(on));
+  els.chat.setAttribute('aria-checked', String(!on));
+  els.agent.tabIndex = on ? 0 : -1;
+  els.chat.tabIndex = on ? -1 : 0;
+  document.body.classList.toggle('is-agent', on);
+  els.input.placeholder = t(on ? 'input.agentPlaceholder' : 'input.chatPlaceholder');
+  if (state.turns.length === 0) renderWelcome();
 }
 
 function wireUi() {
@@ -1464,10 +1826,37 @@ function wireUi() {
     await refreshContext();
   });
 
+  const setMode = async (agentMode) => {
+    if (state.busy || agentMode === state.settings.agentMode) return;
+    state.settings = await saveSettings({ agentMode });
+    applyAgentUi();
+    setStatus(t(agentMode ? 'mode.agentOn' : 'mode.chatOn'));
+    els.input.focus();
+  };
+  els.theme.addEventListener('click', async () => {
+    state.settings = await saveSettings({ theme: nextTheme(state.settings.theme) });
+    renderTheme();
+  });
+  // '시스템 설정 따름' 일 때 운영체제 테마가 바뀌면 버튼 아이콘도 맞춥니다.
+  onSystemThemeChange(() => renderTheme());
+
+  els.chat.addEventListener('click', () => setMode(false));
+  els.agent.addEventListener('click', () => setMode(true));
+  // 라디오 그룹답게 좌우 화살표로도 바꿀 수 있게 합니다.
+  for (const button of [els.chat, els.agent]) {
+    button.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      const next = button === els.chat ? els.agent : els.chat;
+      next.focus();
+      setMode(next === els.agent);
+    });
+  }
+
   els.model.addEventListener('change', async () => {
     if (!els.model.value) return;
     state.settings = await saveSettings({ model: els.model.value });
-    setStatus(`모델을 ${state.settings.model} 로 바꿨습니다.`);
+    setStatus(t('models.changed', { model: state.settings.model }));
   });
 
   if (state.embedded) {
@@ -1485,8 +1874,21 @@ function wireUi() {
     const contextChanged =
       settings.contextMode !== state.settings.contextMode ||
       settings.maxContextChars !== state.settings.maxContextChars;
+    const agentChanged = settings.agentMode !== state.settings.agentMode;
+    const themeChanged = settings.theme !== state.settings.theme;
+    const languageChanged = settings.language !== state.settings.language;
     state.settings = settings;
+    if (themeChanged) renderTheme();
+    if (languageChanged) {
+      // 고정 문구·빠른 질문·대화(버튼 문구)·테마 버튼까지 새 언어로 다시 그립니다.
+      applyLanguage();
+      renderQuick();
+      renderTheme();
+      applyAgentUi();
+      renderAll();
+    }
     els.ctxMode.value = settings.contextMode;
+    if (agentChanged) applyAgentUi();
     // 목록을 다시 불러야 하는 경우는 한 번만 호출합니다.
     if (baseChanged || els.model.value !== settings.model) refreshModels();
     if (contextChanged) refreshContext();
@@ -1527,9 +1929,18 @@ function wireTabEvents() {
   });
 }
 
+/** 설정의 언어(자동이면 브라우저 언어)를 적용하고 화면의 고정 문구를 번역합니다. */
+function applyLanguage() {
+  setLanguage(resolveLanguage(state.settings?.language));
+  localizeDocument(document);
+}
+
 async function init() {
   state.settings = await loadSettings();
+  applyLanguage();
   els.ctxMode.value = state.settings.contextMode;
+  renderTheme();
+  applyAgentUi();
   renderQuick();
   wireUi();
   autoGrow();
@@ -1553,8 +1964,8 @@ async function init() {
 init().catch((error) => {
   console.error('[page-chatbot] 초기화 실패:', error);
   showBanner({
-    title: '패널을 초기화하지 못했습니다.',
+    title: t('init.failed'),
     hint: String(error?.message ?? error),
-    action: { label: '설정 열기', run: openOptions },
+    action: { label: t('banner.openSettings'), run: openOptions },
   });
 });

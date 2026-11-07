@@ -16,6 +16,8 @@
       model: 'gemini-flash',
       stream: true,
       contextMode: 'page',
+      // ?lang=en / ?lang=ko 로 언어를 고정해 볼 수 있습니다(없으면 브라우저 언어).
+      language: new URLSearchParams(location.search).get('lang') || 'auto',
     },
   };
   const session = {};
@@ -98,11 +100,12 @@
       onChanged: { addListener: (fn) => changeListeners.push(fn), removeListener: () => {} },
     },
     windows: { getCurrent: async () => ({ id: 1 }) },
+    i18n: { getUILanguage: () => navigator.language, getMessage: () => '' },
     tabs: {
       query: async () => [
         { id: activeTabId, windowId: 1, url: makePage(activeTabId).url, title: `탭 ${activeTabId}`, active: true },
       ],
-      get: async (id) => ({ id, windowId: 1, url: makePage(id).url, title: `탭 ${id}` }),
+      get: async (id) => ({ id, windowId: 1, url: makePage(id).url, title: `탭 ${id}`, status: 'complete' }),
       onActivated: { addListener: (fn) => activatedListeners.push(fn) },
       onUpdated: { addListener: (fn) => updatedListeners.push(fn) },
       onRemoved: { addListener: () => {} },
@@ -156,6 +159,34 @@
           }
           if (insertScenario === 'noTargets') return [{ frameId: 0, result: { status: 'noTargets' } }];
           return [{ frameId: 0, result: { status: 'needsPick', count: 2 } }];
+        }
+        // 에이전트 조작 — 페이지에 검색창(1)과 결제 버튼(2)이 있는 것처럼 답합니다.
+        if (func?.name === 'runPageAction') {
+          const action = args?.[0] ?? {};
+          calls[calls.length - 1].agentAction = action;
+          if (action.kind === 'snapshot') {
+            const page = makePage(tabId);
+            return [
+              {
+                frameId: 0,
+                result: {
+                  ok: true,
+                  url: page.url,
+                  title: page.title,
+                  scroll: { y: 0, height: 1600, viewport: 800 },
+                  elements: [
+                    { ref: '1', tag: 'input', type: 'search', name: '검색', value: '', inView: true },
+                    { ref: '2', tag: 'button', type: 'button', name: '결제하기', inView: true },
+                  ],
+                  totalInteractive: 2,
+                  text: page.text.slice(0, 200),
+                },
+              },
+            ];
+          }
+          // 실제 주입 함수처럼 확장 프로그램이 넘긴 현재 언어 문구를 씁니다.
+          const said = action.msgs?.[action.kind === 'type' ? 'pa.typed' : 'pa.clicked'];
+          return [{ frameId: 0, result: { ok: true, message: said ?? (action.kind === 'type' ? '입력했습니다.' : '클릭했습니다.') } }];
         }
         if (func) {
           return [

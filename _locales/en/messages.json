@@ -1,0 +1,12 @@
+{
+  "extName": { "message": "Page Chatbot" },
+  "extShortName": { "message": "Page Chatbot" },
+  "extDescription": {
+    "message": "A side-panel AI chatbot that reads the page you're on and answers from it — or operates the browser for you in agent mode. Connects to LiteLLM or any OpenAI-compatible server."
+  },
+  "actionTitle": { "message": "Open Page Chatbot" },
+  "commandToggle": { "message": "Open or close Page Chatbot" },
+  "hostResize": { "message": "Drag to resize" },
+  "hostFrame": { "message": "Page Chatbot" },
+  "hostClose": { "message": "Close" }
+}

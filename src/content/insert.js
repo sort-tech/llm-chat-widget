@@ -292,9 +292,9 @@ export function runInsert(options) {
 
   const tip = document.createElement('div');
   tip.className = 'tip';
-  tip.textContent = '입력할 위치를 클릭하세요';
+  tip.textContent = options?.msgs?.tip ?? 'Click where to insert';
   const tipHint = document.createElement('small');
-  tipHint.textContent = '취소: ESC';
+  tipHint.textContent = options?.msgs?.tipHint ?? 'Esc';
   tip.append(tipHint);
 
   const box = document.createElement('div');

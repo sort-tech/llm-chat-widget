@@ -85,7 +85,9 @@ test('중첩 목록과 순서 있는 목록을 만든다', () => {
 test('체크박스 목록을 표시한다', () => {
   const html = renderMarkdown('- [x] 완료\n- [ ] 미완');
   assert.ok(html.includes('md-task is-done'));
-  assert.ok(html.includes('☐'));
+  assert.ok(html.includes('aria-label="미완료"'));
+  // 장식용 기호 문자를 쓰지 않습니다(아이콘은 CSS 가 그림).
+  assert.ok(!/[☑☐]/.test(html));
 });
 
 test('표를 정렬 정보와 함께 만든다', () => {

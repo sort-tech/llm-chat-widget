@@ -18,7 +18,7 @@ mkdirSync(outDir, { recursive: true });
 rmSync(outFile, { force: true });
 
 // 확장 프로그램 실행에 필요한 것만 담습니다.
-const include = ['manifest.json', 'icons', 'src'];
+const include = ['manifest.json', '_locales', 'icons', 'src'];
 
 execFileSync('zip', ['-r', '-q', outFile, ...include, '-x', '*.DS_Store'], {
   cwd: ROOT,
